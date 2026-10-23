@@ -34,6 +34,8 @@ var _peer_pets := {}                       ## other players' pet specs
 var _show_pet: Pet                         ## menu preview pet
 var shirt_color := Color(0.95, 0.45, 0.15)
 var car_color := Color(0.95, 0.45, 0.15)   ## your ute's paint (menu picker, saved)
+var vehicle_kind := "ute"                  ## ute / buggy / quad / bike (menu picker, saved)
+var _peer_vehicles := {}                   ## other players' machines
 var admin_unlocked := false                 ## console "admin 1234" shows the admin menu
 var voice: Voice
 var console: DevConsole
@@ -290,6 +292,7 @@ func _build_showcase() -> void:
 	_show_car = SandVehicle.new()
 	_show_car.name = "MenuUte"
 	_show_car.body_color = car_color
+	_show_car.kind = vehicle_kind
 	_show_car.scripted = true
 	_show_car.driver_present = false
 	_show_car.transform = Transform3D(Basis.looking_at(Vector3(0.25, 0, -1).normalized(), Vector3.UP), p + Vector3.UP * 1.2)
@@ -505,6 +508,10 @@ func set_look(kind: String, value) -> void:
 			pet_col = 0
 		"pet_col":
 			pet_col = value
+		"vehicle":
+			vehicle_kind = value
+			if _show_car and is_instance_valid(_show_car):
+				_show_car.set_kind(value)
 	_rebuild_preview()
 	save_settings()
 
@@ -610,6 +617,9 @@ func _load_settings() -> void:
 		shirt_color = cf.get_value("look", "shirt_color", shirt_color)
 		pet_kind = String(cf.get_value("look", "pet", pet_kind))
 		pet_col = int(cf.get_value("look", "pet_col", pet_col))
+		vehicle_kind = String(cf.get_value("player", "vehicle", vehicle_kind))
+		if not vehicle_kind in SandVehicle.KINDS:
+			vehicle_kind = "ute"
 		_settings_music = bool(cf.get_value("audio", "music", true))
 		var vol := float(cf.get_value("audio", "sfx_db", 0.0))
 		AudioServer.set_bus_volume_db(AudioServer.get_bus_index("SFX"), vol)
@@ -627,6 +637,7 @@ func save_settings() -> void:
 	cf.set_value("look", "shirt_color", shirt_color)
 	cf.set_value("look", "pet", pet_kind)
 	cf.set_value("look", "pet_col", pet_col)
+	cf.set_value("player", "vehicle", vehicle_kind)
 	cf.set_value("audio", "music", music.enabled if music else true)
 	cf.set_value("audio", "sfx_db", AudioServer.get_bus_volume_db(AudioServer.get_bus_index("SFX")))
 	cf.save(SETTINGS)
@@ -739,8 +750,11 @@ func _spawn_car(id: int) -> void:
 	var is_local := id == multiplayer.get_unique_id()
 	if is_local:
 		car.body_color = car_color
+		car.kind = vehicle_kind
 	elif _peer_colors.has(id):
 		car.body_color = _peer_colors[id]
+	if not is_local:
+		car.kind = String(_peer_vehicles.get(id, "ute"))
 	car.local_control = is_local
 	if not is_local:
 		car.freeze = true
@@ -778,7 +792,7 @@ func _spawn_car(id: int) -> void:
 			achievements.unlock("deflators"))
 		person.tag_text = player_name
 		if _online():
-			_announce_style.rpc(avatar_spec(), player_name, car_color, pet_spec())
+			_announce_style.rpc(avatar_spec(), player_name, car_color, pet_spec(), vehicle_kind)
 	if is_local:
 		local_car = car
 		camera.target = car
@@ -825,11 +839,11 @@ func _on_peer_joined(id: int) -> void:
 		ropes.sync_to(id)
 	bots.sync_to(id)
 	if local_player:
-		_announce_style.rpc_id(id, avatar_spec(), player_name, car_color, pet_spec())
+		_announce_style.rpc_id(id, avatar_spec(), player_name, car_color, pet_spec(), vehicle_kind)
 
 
 @rpc("any_peer", "call_remote", "reliable")
-func _announce_style(style: String, who := "", col := Color(0, 0, 0, 0), pet := "") -> void:
+func _announce_style(style: String, who := "", col := Color(0, 0, 0, 0), pet := "", veh := "") -> void:
 	var id := multiplayer.get_remote_sender_id()
 	_peer_styles[id] = style
 	if String(_peer_pets.get(id, "")) != pet or (pet != "" and not pets.has_node("Pet_%d" % id)):
@@ -837,6 +851,11 @@ func _announce_style(style: String, who := "", col := Color(0, 0, 0, 0), pet := 
 		var who_p := players.get_node_or_null("Player_%d" % id) as PlayerCharacter
 		if who_p:
 			_spawn_pet(id, who_p, pet)
+	if veh in SandVehicle.KINDS:
+		_peer_vehicles[id] = veh
+		var vc := cars.get_node_or_null("Car_%d" % id) as SandVehicle
+		if vc:
+			vc.set_kind(veh)
 	if col.a > 0.0:
 		_peer_colors[id] = col
 		var c := cars.get_node_or_null("Car_%d" % id) as SandVehicle

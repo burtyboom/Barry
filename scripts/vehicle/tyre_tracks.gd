@@ -40,6 +40,8 @@ func update_from(car: SandVehicle, delta: float) -> void:
 	for i in car.wheels.size():
 		var w: SandVehicle.Wheel = car.wheels[i]
 		var list: Array = _pts[i]
+		if w.ghost:
+			continue   # the dirt bike's hidden twin wheels leave no tracks
 		if not w.grounded or w.surface == IslandData.Surface.ROCK or w.in_water:
 			if list.size() > 0 and list[list.size() - 1] != null:
 				list.append(null)

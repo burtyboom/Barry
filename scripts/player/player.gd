@@ -240,7 +240,7 @@ func stand_up() -> void:
 func door_spot() -> Vector3:
 	if car == null:
 		return global_position
-	var p := car.global_transform * OUTSIDE
+	var p := car.global_transform * car.outside_point()
 	p.y = island.height_at(p.x, p.z)
 	return p
 
@@ -347,13 +347,13 @@ func _tie_anchor(main: Node) -> Vector3:
 	if tie_car != "":
 		var c := main.cars.get_node_or_null(tie_car) as SandVehicle
 		if c:
-			return c.global_transform * SandVehicle.REAR_POINT
+			return c.global_transform * c.rear_point()
 	var h := main.players.get_node_or_null(tie_holder) as PlayerCharacter
 	if h and tie_car == "":
 		if h.is_on_foot():
 			return h.avatar.hand_r.global_position
 		if h.car:
-			return h.car.global_transform * SandVehicle.REAR_POINT   # they jumped in their ute: still on the end of it
+			return h.car.global_transform * h.car.rear_point()   # they jumped in their ute: still on the end of it
 	return Vector3.INF
 
 
@@ -536,7 +536,7 @@ func _physics_process(delta: float) -> void:
 	match state:
 		State.IN_CAR:
 			_follow_seat()
-			avatar.animate(delta, "drive", 0.0)
+			avatar.animate(delta, car.ride_pose() if car else "drive", 0.0)
 		State.EXITING:
 			_run_exit(delta)
 		State.ENTERING:
@@ -562,7 +562,7 @@ func _set_state(s: State) -> void:
 
 
 func _apply_state_visuals() -> void:
-	avatar.visible = state != State.IN_CAR
+	avatar.visible = state != State.IN_CAR or (car != null and car.rider_visible())
 	_shape.disabled = state != State.ON_FOOT
 	if state != State.ON_FOOT:
 		_bonk = 0
@@ -574,9 +574,28 @@ func _apply_state_visuals() -> void:
 func _follow_seat() -> void:
 	if car == null:
 		return
-	global_transform = car.global_transform * Transform3D(Basis.IDENTITY, SEAT)
+	if state == State.IN_CAR:
+		avatar.visible = car.rider_visible()   # (a friend's machine can change under them)
+	if car.rider_visible():
+		# open machines: sit on it where everyone can see you (leaning with the bike)
+		global_transform = car.rider_xf(avatar.hip_height())
+	else:
+		global_transform = car.global_transform * Transform3D(Basis.IDENTITY, SEAT)
 	_yaw = car_yaw()
 	avatar.rotation = Vector3.ZERO
+
+
+## Where you sit / climb through / stand beside this machine (car-local).
+func _seat_pt() -> Vector3:
+	if car.rider_visible():
+		return car.seat_point() - Vector3(0, avatar.hip_height(), 0)
+	return SEAT
+
+
+func _doorway_pt() -> Vector3:
+	if car.rider_visible():
+		return car.doorway_point() - Vector3(0, avatar.hip_height() * 0.6, 0)
+	return DOORWAY
 
 
 ## Car-local point -> world, with OUTSIDE snapped to the ground.
@@ -615,10 +634,10 @@ func _run_rolled_exit(delta: float) -> void:
 		land.y = island.height_at(land.x, land.z)
 		var out_yaw := atan2(-(land - top).x, -(land - top).z)
 		if _t < 0.4:
-			global_position = _car_point(SEAT)
+			global_position = _car_point(_seat_pt())
 			pose = "sit"
 		elif _t < 1.3:
-			global_position = _car_point(SEAT).lerp(win - Vector3.UP * 0.9, smoothstep(0.4, 1.3, _t))
+			global_position = _car_point(_seat_pt()).lerp(win - Vector3.UP * 0.9, smoothstep(0.4, 1.3, _t))
 			pose = "climb_out"
 		elif _t < 1.9:
 			var k := smoothstep(1.3, 1.9, _t)
@@ -676,20 +695,20 @@ func _run_exit(delta: float) -> void:
 	var side_yaw := car_yaw() - PI * 0.5   # facing out of the driver's door
 	car.door_target = 1.0 if _t < 1.0 else 0.0
 	if _t < 0.3:
-		_place_at(_car_point(SEAT), car_yaw())
-		avatar.animate(delta, "sit", 0.0)
+		_place_at(_car_point(_seat_pt()), car_yaw())
+		avatar.animate(delta, "sit" if not car.rider_visible() else car.ride_pose(), 0.0)
 	elif _t < 0.65:
 		var k := smoothstep(0.3, 0.65, _t)
-		_place_at(_car_point(SEAT).lerp(_car_point(DOORWAY), k), lerp_angle(car_yaw(), side_yaw, k))
-		avatar.animate(delta, "sit", 0.0)
+		_place_at(_car_point(_seat_pt()).lerp(_car_point(_doorway_pt()), k), lerp_angle(car_yaw(), side_yaw, k))
+		avatar.animate(delta, "sit" if not car.rider_visible() else car.ride_pose(), 0.0)
 	elif _t < 1.0:
 		var k := (_t - 0.65) / 0.35
-		var p := _car_point(DOORWAY).lerp(_car_point(OUTSIDE, true), k)
+		var p := _car_point(_doorway_pt()).lerp(_car_point(car.outside_point(), true), k)
 		p.y += sin(k * PI) * 0.35
 		_place_at(p, side_yaw)
 		avatar.animate(delta, "jump", 0.0)
 	else:
-		_place_at(_car_point(OUTSIDE, true), side_yaw)
+		_place_at(_car_point(car.outside_point(), true), side_yaw)
 		avatar.animate(delta, "idle", 0.0)
 		if _t >= EXIT_TIME:
 			velocity = Vector3.ZERO
@@ -702,21 +721,21 @@ func _run_enter(delta: float) -> void:
 	car.door_target = 1.0 if _t < 1.0 else 0.0
 	if _t < 0.25:
 		var k := _t / 0.25
-		_place_at(_enter_from.lerp(_car_point(OUTSIDE, true), k), lerp_angle(_yaw, side_yaw, k))
+		_place_at(_enter_from.lerp(_car_point(car.outside_point(), true), k), lerp_angle(_yaw, side_yaw, k))
 		avatar.animate(delta, "walk", 2.0)
 	elif _t < 0.6:
 		var k := (_t - 0.25) / 0.35
-		var p := _car_point(OUTSIDE, true).lerp(_car_point(DOORWAY), k)
+		var p := _car_point(car.outside_point(), true).lerp(_car_point(_doorway_pt()), k)
 		p.y += sin(k * PI) * 0.35
 		_place_at(p, side_yaw)
 		avatar.animate(delta, "jump", 0.0)
 	elif _t < 0.95:
 		var k := smoothstep(0.6, 0.95, _t)
-		_place_at(_car_point(DOORWAY).lerp(_car_point(SEAT), k), lerp_angle(side_yaw, car_yaw(), k))
-		avatar.animate(delta, "sit", 0.0)
+		_place_at(_car_point(_doorway_pt()).lerp(_car_point(_seat_pt()), k), lerp_angle(side_yaw, car_yaw(), k))
+		avatar.animate(delta, "sit" if not car.rider_visible() else car.ride_pose(), 0.0)
 	else:
 		_follow_seat()
-		avatar.animate(delta, "drive", 0.0)
+		avatar.animate(delta, car.ride_pose(), 0.0)
 		if _t >= ENTER_TIME:
 			_set_state(State.IN_CAR)
 
@@ -745,7 +764,7 @@ func _check_bumped() -> void:
 		if v.length() < 2.0:
 			continue
 		var lp := other.global_transform.affine_inverse() * (global_position + Vector3.UP * 0.8)
-		if absf(lp.x) < 1.3 and absf(lp.y) < 1.6 and absf(lp.z) < 2.8:
+		if absf(lp.x) < float(other.spec["x"]) + 0.4 and absf(lp.y) < 1.6 and absf(lp.z) < float(other.spec["z"]) + 1.35:
 			var away := (global_position - other.global_position)
 			away.y = 0.0
 			away = away.normalized()
@@ -1084,7 +1103,7 @@ func _remote_update(delta: float) -> void:
 	match state:
 		State.IN_CAR:
 			_follow_seat()
-			avatar.animate(delta, "drive", 0.0)
+			avatar.animate(delta, car.ride_pose() if car else "drive", 0.0)
 			return
 		State.SITTING:
 			global_transform = _seat_xf

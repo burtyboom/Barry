@@ -1,6 +1,10 @@
 class_name SandVehicle
 extends RigidBody3D
 ## A 4WD wagon with raycast wheels and a sand flotation / bogging model.
+## It can also be a buggy, a quad bike or a dirt bike (see `kind` / KIND_SPECS): same
+## four raycast wheels underneath, different body, size and tuning. The dirt bike rides
+## on two narrow pairs of wheels (only one of each pair is drawn), leans into corners and
+## never bogs.
 ##
 ## THE SAND MODEL (per wheel, every physics tick)
 ## ------------------------------------------------
@@ -24,10 +28,48 @@ signal bead_rolled(wheel: int)
 signal bead_reseated(wheel: int)
 signal rolled_over(state: int)   ## came to rest: 0 back on its wheels, 1 on its side, 2 on its roof
 
-## Car-local points for recovery gear.
+## Car-local points for recovery gear (the ute's - use front_point() / rear_point() /
+## hose_point() on a car, which follow its kind).
 const FRONT_POINT := Vector3(0, 0.30, -2.50)   ## bullbar recovery point / winch fairlead
 const REAR_POINT := Vector3(0, 0.10, 2.40)     ## tow hitch
 const HOSE_POINT := Vector3(0.62, 0.95, 2.12)  ## compressor outlet at the back of the tub
+
+## The machines you can drive. Bots pick a ute most of the time.
+const KINDS := ["ute", "buggy", "quad", "bike"]
+const KIND_NAMES := {"ute": "4WD ute", "buggy": "Buggy", "quad": "Quad bike", "bike": "Dirt bike"}
+## Per-kind tuning and layout. x / z: wheel mount half-track / half-wheelbase; front / rear /
+## hose: recovery points; seat: where the driver's hips go (open machines show the rider);
+## outside: where you stand to hop on; float: how much it sinks compared with the ute.
+const KIND_SPECS := {
+	"ute": {"mass": 2500.0, "com": Vector3(0, -0.05, 0), "x": 0.92, "z": 1.45, "r": 0.50, "tyre_w": 0.42,
+		"rest": 0.42, "spring": 42000.0, "damp": 3800.0, "anti_roll": 14000.0,
+		"drive_hi": 15000.0, "drive_lo": 30000.0, "power": 155000.0, "top": 24.0, "top_lo": 11.0, "rev": 7.0,
+		"brake": 26000.0, "soft_drag": 900.0, "dig": 0.20, "float": 1.0, "steer": 0.60,
+		"front": Vector3(0, 0.30, -2.50), "rear": Vector3(0, 0.10, 2.40), "hose": Vector3(0.62, 0.95, 2.12),
+		"seat": Vector3(0.42, 0.10, 0.02), "doorway": Vector3(1.02, 0.25, 0.02), "outside": Vector3(1.85, 0.0, 0.05),
+		"pitch": 1.0},
+	"buggy": {"mass": 950.0, "com": Vector3(0, -0.25, 0.1), "x": 0.96, "z": 1.32, "r": 0.44, "tyre_w": 0.38,
+		"rest": 0.52, "spring": 12500.0, "damp": 1300.0, "anti_roll": 4200.0,
+		"drive_hi": 7000.0, "drive_lo": 13000.0, "power": 80000.0, "top": 26.0, "top_lo": 12.0, "rev": 8.0,
+		"brake": 10000.0, "soft_drag": 300.0, "dig": 0.14, "float": 0.65, "steer": 0.62,
+		"front": Vector3(0, -0.12, -2.02), "rear": Vector3(0, -0.10, 1.82), "hose": Vector3(0.45, 0.35, 1.45),
+		"seat": Vector3(0.38, -0.12, 0.30), "doorway": Vector3(0.95, 0.0, 0.25), "outside": Vector3(1.75, 0.0, 0.25),
+		"pitch": 1.25},
+	"quad": {"mass": 380.0, "com": Vector3(0, -0.15, 0.05), "x": 0.50, "z": 0.62, "r": 0.31, "tyre_w": 0.30,
+		"rest": 0.26, "spring": 7000.0, "damp": 650.0, "anti_roll": 2600.0,
+		"drive_hi": 2800.0, "drive_lo": 5400.0, "power": 26000.0, "top": 21.0, "top_lo": 10.0, "rev": 6.0,
+		"brake": 4000.0, "soft_drag": 120.0, "dig": 0.14, "float": 0.6, "steer": 0.62,
+		"front": Vector3(0, 0.10, -1.08), "rear": Vector3(0, 0.12, 1.02), "hose": Vector3(0, 0.40, 0.95),
+		"seat": Vector3(0, 0.50, 0.22), "doorway": Vector3(0.45, 0.45, 0.2), "outside": Vector3(1.15, 0.0, 0.2),
+		"pitch": 1.5},
+	"bike": {"mass": 260.0, "com": Vector3(0, -0.10, 0.0), "x": 0.20, "z": 0.74, "r": 0.36, "tyre_w": 0.20,
+		"rest": 0.26, "spring": 5000.0, "damp": 460.0, "anti_roll": 2200.0,
+		"drive_hi": 2200.0, "drive_lo": 3800.0, "power": 24000.0, "top": 24.0, "top_lo": 12.0, "rev": 5.0,
+		"brake": 2800.0, "soft_drag": 20.0, "dig": 0.0, "float": 0.0, "steer": 0.55,
+		"front": Vector3(0, 0.25, -1.15), "rear": Vector3(0, 0.12, 1.12), "hose": Vector3(0.15, 0.45, 0.5),
+		"seat": Vector3(0, 0.50, 0.18), "doorway": Vector3(0.35, 0.45, 0.15), "outside": Vector3(0.95, 0.0, 0.15),
+		"pitch": 1.7},
+}
 const DEFLATE_RATE := 1.4                      ## psi per second through a deflator
 ## Rolling a bead off the rim needs very low pressure, real speed and sustained hard
 ## cornering on firm sand - a warning shows on the tyre display first.
@@ -72,6 +114,11 @@ const RECOVER_COOLDOWN := 5.0
 @export var low_psi_grip_bonus := 0.60   ## aired down, the long flat footprint claws at soft sand
 
 @export var body_color := Color(0.85, 0.85, 0.80)
+var kind := "ute"           ## ute / buggy / quad / bike (set before adding to the tree, or set_kind())
+var spec: Dictionary = KIND_SPECS["ute"]
+var body: Node3D            ## holds the visuals + wheels; leans with the dirt bike
+var _lean := 0.0
+var _flotation := 1.0       ## light machines sink less (the bike not at all)
 
 class Wheel:
 	var name := ""
@@ -100,6 +147,7 @@ class Wheel:
 	var rr_left := 0.0        # unused rolling resistance (holds a stationary bogged car)
 	var lat_force := 0.0
 	var flat := false          # rolled off the bead: no air until it's pumped back up
+	var ghost := false         # the dirt bike's hidden twin wheels: no tracks, no tyre display
 	var bead_risk := 0.0
 	var v_long := 0.0
 	var fwd := Vector3.FORWARD
@@ -178,9 +226,8 @@ var spray: SandSpray
 
 func _ready() -> void:
 	island = IslandData.instance
-	mass = 2500.0
+	_apply_spec()
 	center_of_mass_mode = RigidBody3D.CENTER_OF_MASS_MODE_CUSTOM
-	center_of_mass = Vector3(0, -0.05, 0)
 	collision_layer = 2
 	collision_mask = 1 | 2 | 4
 	can_sleep = false
@@ -220,8 +267,155 @@ func _ready() -> void:
 		add_child(_siren_snd)
 
 
+# ------------------------------------------------------------- kinds
+func _apply_spec() -> void:
+	if not KIND_SPECS.has(kind):
+		kind = "ute"
+	spec = KIND_SPECS[kind]
+	mass = spec["mass"]
+	center_of_mass_mode = RigidBody3D.CENTER_OF_MASS_MODE_CUSTOM
+	center_of_mass = spec["com"]
+	drive_force_high = spec["drive_hi"]
+	drive_force_low = spec["drive_lo"]
+	engine_power = spec["power"]
+	max_speed_high = spec["top"]
+	max_speed_low = spec["top_lo"]
+	max_speed_reverse = spec["rev"]
+	brake_force = spec["brake"]
+	soft_drag = spec["soft_drag"]
+	spring_k = spec["spring"]
+	damper_c = spec["damp"]
+	rest_length = spec["rest"]
+	wheel_radius = spec["r"]
+	max_steer = spec["steer"]
+	anti_roll = spec["anti_roll"]
+	dig_rate = spec["dig"]
+	_flotation = spec["float"]
+
+
+## Swap to another machine on the fly (a friend's choice arriving online): rebuilds the body
+## and wheels in place.
+func set_kind(k: String) -> void:
+	if k == kind or not KIND_SPECS.has(k):
+		return
+	kind = k
+	if not is_inside_tree():
+		return
+	var psis: Array = []
+	for w in wheels:
+		psis.append(w.psi)
+	for ch in get_children():
+		if ch is CollisionShape3D or ch == body:
+			remove_child(ch)
+			ch.queue_free()
+	wheels.clear()
+	_deflator_nodes.clear()
+	_deflator_mats.clear()
+	door_pivot = null
+	_wave_arm = null
+	_apply_spec()
+	_build_body()
+	_build_wheels()
+	for i in mini(psis.size(), wheels.size()):
+		wheels[i].psi = psis[i]
+
+
+func front_point() -> Vector3:
+	return spec["front"]
+
+
+func rear_point() -> Vector3:
+	return spec["rear"]
+
+
+func hose_point() -> Vector3:
+	return spec["hose"]
+
+
+## Can it take a snatch strap / winch cable (either end)? Not the dirt bike - it doesn't need it.
+func can_recover() -> bool:
+	return kind != "bike"
+
+
+## Has a winch on the front (everything but the bike).
+func has_winch() -> bool:
+	return kind != "bike"
+
+
+## Can it get bogged at all? The dirt bike can't.
+func can_bog() -> bool:
+	return kind != "bike"
+
+
+## Open machines show the rider sitting on / in them; the ute hides you in the cab.
+func rider_visible() -> bool:
+	return kind != "ute"
+
+
+## Astride (quad, bike) or sitting (ute, buggy).
+func ride_pose() -> String:
+	return "ride" if kind == "quad" or kind == "bike" else "drive"
+
+
+func seat_point() -> Vector3:
+	return spec["seat"]
+
+
+func doorway_point() -> Vector3:
+	return spec["doorway"]
+
+
+func outside_point() -> Vector3:
+	return spec["outside"]
+
+
+## Where a pet rides (car-local): the ute's tray, the buggy's passenger seat, the quad's
+## rear rack, on the back of the bike's seat.
+func pet_spot() -> Transform3D:
+	match kind:
+		"buggy":
+			return Transform3D(Basis.IDENTITY, Vector3(-0.38, -0.10, 0.32))
+		"quad":
+			return Transform3D(Basis.IDENTITY, Vector3(0, 0.38, 0.84))
+		"bike":
+			return body.transform * Transform3D(Basis.IDENTITY, Vector3(0, 0.50, 0.86)) if body else Transform3D(Basis.IDENTITY, Vector3(0, 0.50, 0.86))
+	return Transform3D(Basis(Vector3.UP, PI * 0.5), Vector3(-0.42, 0.70, 1.96))
+
+
+## World transform for a rider whose hips are hip_h above their feet (follows the bike's lean).
+func rider_xf(hip_h: float) -> Transform3D:
+	var local := Transform3D(Basis.IDENTITY, seat_point() - Vector3(0, hip_h, 0))
+	return global_transform * body.transform * local
+
+
 # ------------------------------------------------------------- construction
+func _collider(size: Vector3, pos: Vector3) -> void:
+	var cs := CollisionShape3D.new()
+	var bs := BoxShape3D.new()
+	bs.size = size
+	cs.shape = bs
+	cs.position = pos
+	add_child(cs)
+
+
 func _build_body() -> void:
+	body = Node3D.new()
+	body.name = "Body"
+	add_child(body)
+	match kind:
+		"buggy":
+			_collider(Vector3(1.7, 0.45, 3.5), Vector3(0, -0.12, 0))
+			_collider(Vector3(1.45, 0.95, 1.5), Vector3(0, 0.52, 0.25))
+			_build_buggy()
+			return
+		"quad":
+			_collider(Vector3(1.0, 0.5, 1.9), Vector3(0, 0.05, 0))
+			_build_quad()
+			return
+		"bike":
+			_collider(Vector3(0.42, 0.6, 1.9), Vector3(0, 0.12, 0))
+			_build_bike()
+			return
 	# --- collision (kept simple): main body + cab
 	var cs := CollisionShape3D.new()
 	var bs := BoxShape3D.new()
@@ -244,7 +438,7 @@ func _build_body() -> void:
 func _build_ranger() -> void:
 	var v := Node3D.new()
 	v.name = "Visual"
-	add_child(v)
+	body.add_child(v)
 	var paint := body_color
 	var black := Color(0.13, 0.13, 0.14)
 	var dark := Color(0.22, 0.22, 0.24)
@@ -358,6 +552,181 @@ func _build_ranger() -> void:
 	_build_wave_arm(v)
 	if livery != "":
 		_build_livery(v)
+
+
+## A straight tube (roll cage, frame) from a to b.
+func _tube(parent: Node3D, a: Vector3, b: Vector3, thick: float, c: Color) -> MeshInstance3D:
+	var d := b - a
+	var m := Toon.box(parent, Vector3(thick, thick, d.length() + thick * 0.5), (a + b) * 0.5, c)
+	var up := Vector3.UP if absf(d.normalized().y) < 0.95 else Vector3.BACK
+	m.basis = Basis.looking_at(d.normalized(), up)
+	return m
+
+
+## Can-Am style side-by-side: low wedge nose, two bucket seats in an open roll cage,
+## engine behind the seats, long-travel suspension on fat tyres. Front is -Z.
+func _build_buggy() -> void:
+	var v := Node3D.new()
+	v.name = "Visual"
+	body.add_child(v)
+	var paint := body_color
+	var black := Color(0.13, 0.13, 0.14)
+	var dark := Color(0.22, 0.22, 0.24)
+	var cage := Color(0.10, 0.10, 0.11)
+	# tub, sills and floor
+	Toon.box(v, Vector3(1.40, 0.10, 2.9), Vector3(0, -0.32, 0.05), black)
+	for x in [-0.72, 0.72]:
+		Toon.box(v, Vector3(0.18, 0.30, 1.55), Vector3(x, -0.18, 0.22), paint)
+		Toon.box(v, Vector3(0.19, 0.06, 1.55), Vector3(x, -0.05, 0.22), paint.darkened(0.3))
+	# wedge nose (bonnet down to the bumper) and the dash behind it
+	Toon.prism_x(v, 1.30, PackedVector2Array([Vector2(-2.0, -0.24), Vector2(-0.70, -0.30),
+		Vector2(-0.70, 0.30), Vector2(-1.15, 0.30), Vector2(-1.95, 0.02)]), paint)
+	Toon.box(v, Vector3(0.9, 0.04, 0.5), Vector3(0, 0.27, -0.98), paint.darkened(0.15), true, Vector3(-8, 0, 0))   # bonnet scoop
+	Toon.box(v, Vector3(1.32, 0.26, 0.22), Vector3(0, 0.16, -0.62), dark)   # dash
+	for x in [-0.42, 0.42]:
+		Toon.box(v, Vector3(0.36, 0.10, 0.06), Vector3(x, 0.06, -1.86), Color(1.0, 0.98, 0.88), true, Vector3(0, 0, 8.0 * signf(x)), true)
+	Toon.box(v, Vector3(1.2, 0.12, 0.12), Vector3(0, -0.14, -2.0), dark)   # bumper tube
+	Toon.box(v, Vector3(0.9, 0.05, 0.6), Vector3(0, -0.34, -1.75), Color(0.62, 0.64, 0.68))   # skid plate
+	# fenders over the long-travel wheels
+	for x in [-0.95, 0.95]:
+		for z in [-1.32, 1.32]:
+			Toon.box(v, Vector3(0.48, 0.06, 1.0), Vector3(x, 0.20, z), paint, true, Vector3(0, 0, -10.0 * signf(x)))
+			Toon.box(v, Vector3(0.10, 0.06, 0.10), Vector3(x * 0.7, -0.10, z), dark)   # arm mounts
+			_tube(v, Vector3(x * 0.62, -0.20, z - 0.15), Vector3(x * 0.9, -0.36, z), 0.06, dark)   # A-arms
+			_tube(v, Vector3(x * 0.62, -0.20, z + 0.15), Vector3(x * 0.9, -0.36, z), 0.06, dark)
+			_tube(v, Vector3(x * 0.55, 0.30, z * 0.92), Vector3(x * 0.88, -0.30, z), 0.07, Color(0.95, 0.75, 0.10))   # coil-over
+	# engine cover behind the seats, tail lights, exhaust
+	Toon.prism_x(v, 1.30, PackedVector2Array([Vector2(0.92, -0.30), Vector2(2.0, -0.22),
+		Vector2(1.95, 0.18), Vector2(0.95, 0.42)]), paint)
+	Toon.box(v, Vector3(0.9, 0.05, 0.5), Vector3(0, 0.33, 1.38), black, true, Vector3(12, 0, 0))   # vents
+	for x in [-0.52, 0.52]:
+		Toon.box(v, Vector3(0.22, 0.10, 0.05), Vector3(x, 0.05, 1.99), Color(1, 0.18, 0.12), true, Vector3.ZERO, true)
+	_tube(v, Vector3(-0.40, -0.05, 1.70), Vector3(-0.45, 0.02, 2.06), 0.10, Color(0.80, 0.82, 0.86))
+	# two bucket seats + steering wheel (right-hand drive, like the ute)
+	for x in [-0.38, 0.38]:
+		Toon.box(v, Vector3(0.48, 0.14, 0.52), Vector3(x, -0.20, 0.32), black)
+		Toon.box(v, Vector3(0.48, 0.78, 0.14), Vector3(x, 0.17, 0.64), black, true, Vector3(12, 0, 0))
+		Toon.box(v, Vector3(0.40, 0.10, 0.16), Vector3(x, 0.50, 0.70), paint.darkened(0.15), true, Vector3(12, 0, 0))   # headrest band
+	var sw := Node3D.new()
+	sw.position = Vector3(0.38, 0.32, -0.40)
+	sw.rotation_degrees = Vector3(-55, 90, 0)
+	v.add_child(sw)
+	Toon.cyl_x(sw, 0.19, 0.05, 14, Vector3.ZERO, black)
+	Toon.cyl_x(sw, 0.06, 0.07, 8, Vector3.ZERO, dark, false)
+	_tube(v, Vector3(0.38, 0.30, -0.42), Vector3(0.38, 0.18, -0.62), 0.05, dark)
+	# roll cage
+	for x in [-1.0, 1.0]:
+		_tube(v, Vector3(0.70 * x, -0.12, -0.72), Vector3(0.60 * x, 1.18, -0.12), 0.08, cage)   # A pillar
+		_tube(v, Vector3(0.70 * x, -0.12, 0.86), Vector3(0.60 * x, 1.18, 0.82), 0.08, cage)    # B pillar
+		_tube(v, Vector3(0.60 * x, 1.18, -0.12), Vector3(0.60 * x, 1.18, 0.82), 0.08, cage)    # roof rail
+		_tube(v, Vector3(0.60 * x, 1.18, 0.82), Vector3(0.55 * x, -0.02, 1.55), 0.07, cage)    # back brace
+		_tube(v, Vector3(0.74 * x, 0.30, -0.45), Vector3(0.74 * x, 0.30, 0.86), 0.06, paint.darkened(0.15))   # side bar
+	_tube(v, Vector3(-0.60, 1.18, -0.12), Vector3(0.60, 1.18, -0.12), 0.08, cage)
+	_tube(v, Vector3(-0.60, 1.18, 0.82), Vector3(0.60, 1.18, 0.82), 0.08, cage)
+	_tube(v, Vector3(-0.66, 0.42, 0.84), Vector3(0.66, 0.42, 0.84), 0.07, cage)
+	Toon.box(v, Vector3(1.28, 0.04, 0.98), Vector3(0, 1.22, 0.35), paint)   # roof
+	Toon.box(v, Vector3(0.9, 0.10, 0.14), Vector3(0, 1.28, -0.10), dark)   # light bar
+	for x in [-0.3, 0.0, 0.3]:
+		Toon.box(v, Vector3(0.20, 0.07, 0.04), Vector3(x, 1.28, -0.18), Color(1.0, 0.95, 0.7), true, Vector3.ZERO, true)
+	# whip flag on the back of the cage - very dunes
+	_tube(v, Vector3(-0.55, 1.10, 0.90), Vector3(-0.55, 2.45, 0.95), 0.025, Color(0.9, 0.9, 0.9))
+	Toon.box(v, Vector3(0.02, 0.22, 0.32), Vector3(-0.55, 2.35, 1.10), Color(1.0, 0.35, 0.10))
+
+
+## Four-wheeler: fat little tyres, plastics over the wheels, racks front and back, a long
+## seat to sit astride and handlebars that turn with the steering.
+func _build_quad() -> void:
+	var v := Node3D.new()
+	v.name = "Visual"
+	body.add_child(v)
+	var paint := body_color
+	var black := Color(0.13, 0.13, 0.14)
+	var dark := Color(0.24, 0.24, 0.26)
+	var steel := Color(0.55, 0.57, 0.60)
+	Toon.box(v, Vector3(0.50, 0.18, 1.25), Vector3(0, -0.14, 0.0), black)          # frame
+	Toon.box(v, Vector3(0.42, 0.32, 0.46), Vector3(0, -0.02, 0.05), dark)           # engine
+	Toon.box(v, Vector3(0.30, 0.10, 0.20), Vector3(0.24, -0.02, 0.10), steel)      # cylinder head
+	Toon.box(v, Vector3(0.52, 0.28, 0.52), Vector3(0, 0.27, -0.28), paint)          # tank / nose
+	# plastics: front and rear fenders sweep over the wheels
+	Toon.box(v, Vector3(1.12, 0.09, 0.66), Vector3(0, 0.22, -0.64), paint)
+	Toon.box(v, Vector3(0.70, 0.18, 0.20), Vector3(0, 0.12, -0.98), paint)          # nose
+	Toon.box(v, Vector3(1.12, 0.09, 0.66), Vector3(0, 0.24, 0.62), paint)
+	for x in [-0.36, 0.36]:
+		Toon.box(v, Vector3(0.24, 0.05, 0.50), Vector3(x, -0.04, 0.04), black)      # footwells
+	for x in [-0.22, 0.22]:
+		Toon.box(v, Vector3(0.16, 0.08, 0.05), Vector3(x, 0.15, -1.09), Color(1.0, 0.98, 0.88), true, Vector3.ZERO, true)
+	Toon.box(v, Vector3(0.18, 0.07, 0.04), Vector3(0, 0.25, 0.96), Color(1, 0.18, 0.12), true, Vector3.ZERO, true)
+	# seat
+	Toon.box(v, Vector3(0.36, 0.14, 0.76), Vector3(0, 0.36, 0.24), black)
+	# racks
+	Toon.box(v, Vector3(0.86, 0.03, 0.36), Vector3(0, 0.34, -0.86), steel)
+	Toon.box(v, Vector3(0.86, 0.03, 0.42), Vector3(0, 0.36, 0.86), steel)
+	for x in [-0.42, 0.42]:
+		Toon.box(v, Vector3(0.03, 0.06, 0.42), Vector3(x, 0.39, 0.86), steel)
+		Toon.box(v, Vector3(0.03, 0.06, 0.36), Vector3(x, 0.37, -0.86), steel)
+	# suspension arms + shocks to the wheels
+	for x in [-1.0, 1.0]:
+		for z in [-0.62, 0.62]:
+			_tube(v, Vector3(0.18 * x, -0.12, z), Vector3(0.44 * x, -0.15, z), 0.05, dark)
+			_tube(v, Vector3(0.22 * x, 0.15, z * 0.85), Vector3(0.42 * x, -0.10, z), 0.05, Color(0.95, 0.75, 0.10))
+	_tube(v, Vector3(-0.12, -0.05, 0.30), Vector3(-0.16, 0.05, 0.95), 0.07, Color(0.80, 0.82, 0.86))   # exhaust
+	# handlebars (turn with the steering)
+	var bars := Node3D.new()
+	bars.name = "Bars"
+	bars.position = Vector3(0, 0.46, -0.40)
+	v.add_child(bars)
+	Toon.box(bars, Vector3(0.07, 0.20, 0.07), Vector3(0, 0.0, 0), dark)
+	Toon.box(bars, Vector3(0.80, 0.05, 0.05), Vector3(0, 0.11, 0.05), steel)
+	for x in [-0.36, 0.36]:
+		Toon.box(bars, Vector3(0.13, 0.07, 0.07), Vector3(x, 0.11, 0.05), black)
+	Toon.box(bars, Vector3(0.30, 0.12, 0.12), Vector3(0, 0.04, -0.08), paint)
+	Toon.box(bars, Vector3(0.18, 0.07, 0.03), Vector3(0, 0.04, -0.15), Color(1.0, 0.98, 0.88), true, Vector3.ZERO, true)
+
+
+## Dirt bike: skinny spoked wheels, high fenders, tank and long flat seat, raked forks and
+## wide bars that turn with the steering. Everything sits on the centre line.
+func _build_bike() -> void:
+	var v := Node3D.new()
+	v.name = "Visual"
+	body.add_child(v)
+	var paint := body_color
+	var black := Color(0.13, 0.13, 0.14)
+	var dark := Color(0.24, 0.24, 0.26)
+	var steel := Color(0.62, 0.64, 0.68)
+	var white := Color(0.96, 0.96, 0.94)
+	Toon.box(v, Vector3(0.26, 0.32, 0.42), Vector3(0, -0.06, -0.02), dark)          # engine
+	Toon.box(v, Vector3(0.30, 0.10, 0.22), Vector3(0, 0.12, -0.10), steel)         # cylinder
+	_tube(v, Vector3(0, 0.52, -0.50), Vector3(0, -0.12, -0.22), 0.07, black)        # down tube
+	_tube(v, Vector3(0, 0.52, -0.50), Vector3(0, 0.36, 0.30), 0.07, black)          # spine
+	_tube(v, Vector3(0, 0.36, 0.30), Vector3(0, 0.38, 0.95), 0.05, black)           # subframe
+	_tube(v, Vector3(0, -0.14, 0.18), Vector3(0, -0.14, 0.74), 0.08, steel)         # swingarm
+	_tube(v, Vector3(0, 0.36, 0.22), Vector3(0, -0.04, 0.42), 0.07, Color(0.95, 0.75, 0.10))   # shock
+	Toon.box(v, Vector3(0.34, 0.24, 0.48), Vector3(0, 0.44, -0.24), paint)          # tank
+	for x in [-0.19, 0.19]:
+		Toon.box(v, Vector3(0.04, 0.30, 0.34), Vector3(x, 0.32, -0.34), paint, true, Vector3(0, 0, 0))   # shrouds
+		Toon.box(v, Vector3(0.03, 0.22, 0.30), Vector3(x * 0.8, 0.30, 0.52), white)  # number boards
+	Toon.box(v, Vector3(0.25, 0.09, 0.86), Vector3(0, 0.48, 0.30), black, true, Vector3(-3, 0, 0))   # seat
+	Toon.box(v, Vector3(0.20, 0.03, 0.58), Vector3(0, 0.42, 0.98), paint, true, Vector3(-14, 0, 0))   # rear fender
+	Toon.box(v, Vector3(0.10, 0.05, 0.04), Vector3(0, 0.46, 1.25), Color(1, 0.18, 0.12), true, Vector3.ZERO, true)
+	_tube(v, Vector3(0.17, -0.02, -0.18), Vector3(0.17, 0.26, 0.55), 0.07, Color(0.80, 0.82, 0.86))   # exhaust
+	Toon.box(v, Vector3(0.10, 0.12, 0.34), Vector3(0.17, 0.27, 0.74), Color(0.80, 0.82, 0.86))
+	for x in [-0.14, 0.14]:
+		Toon.box(v, Vector3(0.16, 0.03, 0.06), Vector3(x, -0.12, 0.12), steel)    # foot pegs
+	# front end: forks, fender, plate, bars (turn with the steering)
+	var bars := Node3D.new()
+	bars.name = "Bars"
+	bars.position = Vector3(0, 0.60, -0.56)
+	v.add_child(bars)
+	for x in [-0.09, 0.09]:
+		_tube(bars, Vector3(x, 0.05, 0.0), Vector3(x, -0.72, -0.20), 0.06, steel)
+	Toon.box(bars, Vector3(0.24, 0.05, 0.10), Vector3(0, 0.03, 0.0), dark)          # triple clamp
+	Toon.box(bars, Vector3(0.17, 0.03, 0.62), Vector3(0, -0.30, -0.22), paint, true, Vector3(-10, 0, 0))   # front fender
+	Toon.box(bars, Vector3(0.28, 0.26, 0.04), Vector3(0, 0.06, -0.10), white, true, Vector3(-18, 0, 0))   # number plate
+	Toon.box(bars, Vector3(0.12, 0.08, 0.03), Vector3(0, 0.02, -0.13), Color(1.0, 0.98, 0.88), true, Vector3(-18, 0, 0), true)
+	_tube(bars, Vector3(0, 0.05, 0.02), Vector3(0, 0.22, 0.06), 0.05, dark)          # riser
+	Toon.box(bars, Vector3(0.80, 0.04, 0.04), Vector3(0, 0.24, 0.07), steel)
+	for x in [-0.36, 0.36]:
+		Toon.box(bars, Vector3(0.12, 0.06, 0.06), Vector3(x, 0.24, 0.07), black)
 
 
 ## The driver's arm, poked out the window for a wave (hidden until a bot says g'day).
@@ -555,39 +924,68 @@ func _update_signals(delta: float) -> void:
 
 
 func _build_wheels() -> void:
+	var x: float = spec["x"]
+	var z: float = spec["z"]
+	var tw: float = spec["tyre_w"]
 	var defs := [
-		["FL", Vector3(-0.92, 0.0, -1.45), true, true],
-		["FR", Vector3(0.92, 0.0, -1.45), true, false],
-		["RL", Vector3(-0.92, 0.0, 1.45), false, true],
-		["RR", Vector3(0.92, 0.0, 1.45), false, false],
+		["FL", Vector3(-x, 0.0, -z), true, true],
+		["FR", Vector3(x, 0.0, -z), true, false],
+		["RL", Vector3(-x, 0.0, z), false, true],
+		["RR", Vector3(x, 0.0, z), false, false],
 	]
+	if kind == "bike":
+		defs[0][0] = "Front"
+		defs[2][0] = "Rear"
 	for d in defs:
 		var w := Wheel.new()
 		w.name = d[0]
 		w.mount = d[1]
 		w.front = d[2]
 		w.left = d[3]
+		w.ghost = kind == "bike" and not w.left
 		w.pivot = Node3D.new()
 		w.pivot.position = w.mount - Vector3(0, rest_length, 0)
-		add_child(w.pivot)
+		body.add_child(w.pivot)
 		w.spinner = Node3D.new()
 		w.pivot.add_child(w.spinner)
-		# chunky 10-sided tyre, bright rim, hub cap - blocky so you can SEE it spin
-		var side := -1.0 if w.left else 1.0
-		w.tyre_mesh = Toon.cyl_x(w.spinner, wheel_radius, 0.42, 10, Vector3.ZERO, Color(0.2, 0.19, 0.19))
-		Toon.cyl_x(w.spinner, wheel_radius * 0.55, 0.44, 6, Vector3.ZERO, Color(1.0, 0.82, 0.2), false)
-		Toon.box(w.spinner, Vector3(0.06, 0.16, wheel_radius * 0.9), Vector3(0.22 * side, 0, 0), Color(0.15, 0.15, 0.15), false)
-		# tread blocks
-		for k in 10:
-			var a := TAU * k / 10.0
-			var tb := Toon.box(w.spinner, Vector3(0.44, 0.08, 0.14),
-				Vector3(0, cos(a) * (wheel_radius + 0.02), sin(a) * (wheel_radius + 0.02)),
-				Color(0.15, 0.14, 0.14), false)
-			tb.rotation.x = -a
 		wheels.append(w)
+		if w.ghost:
+			w.tyre_mesh = MeshInstance3D.new()
+			w.spinner.add_child(w.tyre_mesh)
+		else:
+			if kind == "bike":
+				w.spinner.position.x = x   # the one wheel you see sits in the middle
+			# chunky 10-sided tyre, bright rim, hub cap - blocky so you can SEE it spin
+			var side := -1.0 if w.left else 1.0
+			var sides := 10 if kind != "bike" else 12
+			var rim := Color(1.0, 0.82, 0.2)
+			if kind == "bike":
+				rim = Color(0.85, 0.86, 0.9)
+			elif kind != "ute":
+				rim = Color(0.15, 0.15, 0.16)
+			w.tyre_mesh = Toon.cyl_x(w.spinner, wheel_radius, tw, sides, Vector3.ZERO, Color(0.2, 0.19, 0.19))
+			Toon.cyl_x(w.spinner, wheel_radius * (0.55 if kind != "bike" else 0.7), tw + 0.02, 6 if kind != "bike" else 12, Vector3.ZERO, rim, false)
+			if kind == "bike":
+				# spokes
+				for k in 6:
+					var sp := Toon.box(w.spinner, Vector3(0.03, wheel_radius * 1.35, 0.025), Vector3.ZERO, Color(0.25, 0.25, 0.27), false)
+					sp.rotation.x = PI * k / 6.0
+				Toon.cyl_x(w.spinner, 0.06, tw + 0.05, 8, Vector3.ZERO, Color(0.2, 0.2, 0.22), false)
+			else:
+				Toon.box(w.spinner, Vector3(0.06, 0.16, wheel_radius * 0.9), Vector3(tw * 0.52 * side, 0, 0), Color(0.15, 0.15, 0.15), false)
+			# tread blocks
+			var blocks := sides
+			for k in blocks:
+				var a := TAU * k / float(blocks)
+				var tb := Toon.box(w.spinner, Vector3(tw + 0.02, 0.07, wheel_radius * 0.28),
+					Vector3(0, cos(a) * (wheel_radius + 0.02), sin(a) * (wheel_radius + 0.02)),
+					Color(0.15, 0.14, 0.14), false)
+				tb.rotation.x = -a
 		# deflator cap on the valve, hidden until one is screwed on
 		var cap := Node3D.new()
-		cap.position = Vector3(0.25 * side, 0.18, 0.0)
+		cap.position = Vector3((tw * 0.5 + 0.04) * (-1.0 if w.left else 1.0), wheel_radius * 0.36, 0.0)
+		if kind == "bike":
+			cap.position.x += x
 		cap.visible = false
 		w.pivot.add_child(cap)
 		var cm := StandardMaterial3D.new()
@@ -643,6 +1041,8 @@ func set_wheel_psi(index: int, p: float, from_pump := false) -> void:
 	if np < w.psi and w.dig > 0.0:
 		w.dig *= pow(np / w.psi, 1.5)
 	w.psi = np
+	if kind == "bike" and not w.ghost and index + 1 < wheels.size():
+		wheels[index + 1].psi = np   # its hidden twin follows
 
 
 func average_psi() -> float:
@@ -654,7 +1054,10 @@ func average_psi() -> float:
 
 # ------------------------------------------------------------- recovery gear
 func wheel_valve_world(i: int) -> Vector3:
-	return wheels[i].pivot.global_position + global_basis.x * (0.25 if not wheels[i].left else -0.25)
+	if wheels[i].ghost:
+		return Vector3(1e6, 1e6, 1e6)   # the bike's hidden twin: no valve to find
+	var side := -1.0 if wheels[i].left else 1.0
+	return wheels[i].spinner.global_position + global_basis.x * side * (float(spec["tyre_w"]) * 0.5 + 0.04)
 
 
 func _run_deflators(delta: float) -> void:
@@ -688,7 +1091,7 @@ func _update_sounds() -> void:
 		spin = maxf(spin, absf(w.spin_speed) * wheel_radius)
 	var rev := clampf(spin / top, 0.0, 1.0)
 	var thr := throttle if local_control else clampf(absf(speed_kmh) / 30.0, 0.0, 1.0)
-	_engine_snd.pitch_scale = 0.75 + rev * 1.35 + thr * 0.3
+	_engine_snd.pitch_scale = (0.75 + rev * 1.35 + thr * 0.3) * float(spec["pitch"])
 	_engine_snd.volume_db = -14.0 + thr * 7.0 + rev * 3.0
 	var hissing := false
 	for i in wheels.size():
@@ -703,6 +1106,8 @@ func _update_sounds() -> void:
 
 ## Bogged, or sitting dug into the sand (wheels in holes) - the one a winch should pull out.
 func dug_in() -> bool:
+	if not can_bog():
+		return false
 	if is_bogged:
 		return true
 	for w in wheels:
@@ -1116,7 +1521,7 @@ func _simulate(delta: float) -> void:
 	water_depth = maxf(sea_depth, 0.0)
 	if sea_depth > 0.0:
 		var dd := minf(sea_depth, 1.6)
-		apply_central_force(-linear_velocity * (900.0 + 2600.0 * dd))
+		apply_central_force(-linear_velocity * (900.0 + 2600.0 * dd) * mass / 2500.0)
 		apply_central_force(Vector3.UP * mass * 9.81 * 0.22 * dd)
 
 	# anti-roll bars (only while both wheels on the axle are down: once one lifts
@@ -1184,7 +1589,9 @@ func _simulate(delta: float) -> void:
 		var overload := ground_p / strength
 		var load_f := sqrt(w.load / (m4 * g))
 		var speed_f := 1.0 / (1.0 + absf(v_long) / 9.0)
-		var target := lerpf(sink_base_hard, sink_base_soft, s) * overload * overload * load_f * speed_f
+		var target := lerpf(sink_base_hard, sink_base_soft, s) * overload * overload * load_f * speed_f * _flotation
+		if not can_bog():
+			w.dig = 0.0   # the dirt bike skips over the top of anything
 		if w.surface == IslandData.Surface.ROCK:
 			target = 0.0
 			w.dig = 0.0
@@ -1202,6 +1609,8 @@ func _simulate(delta: float) -> void:
 			mu *= 0.55   # flapping sidewall, no grip
 		if w.surface == IslandData.Surface.ROCK:
 			mu = 0.85
+		if not can_bog():
+			mu = maxf(mu, 0.8)   # knobby tyre and a light bike: it always finds grip
 		var rr := 0.015 + rr_sink_coeff * pow(w.sink, 1.2) + (0.3 if w.flat else 0.0)
 		if w.surface == IslandData.Surface.FOREST:
 			rr += 0.05
@@ -1272,7 +1681,9 @@ func _simulate(delta: float) -> void:
 	# ---- aero drag + water
 	var v2 := linear_velocity.length_squared()
 	if v2 > 0.01:
-		apply_central_force(-linear_velocity.normalized() * v2 * 1.1)
+		apply_central_force(-linear_velocity.normalized() * v2 * (1.1 if kind == "ute" else 0.6))
+	if kind == "bike":
+		_hold_upright(on_ground_n(), delta)
 	# soft sand: the tyres plough a bow wave that pushes back harder the faster you go -
 	# ~80 km/h on the hard sand by the water, a lot less up in the soft stuff (airing down helps)
 	var on_ground := 0
@@ -1290,7 +1701,7 @@ func _simulate(delta: float) -> void:
 	var depth := wl - (global_position.y - 0.7)
 	if depth > 0.0:
 		var dk := clampf(depth, 0.0, 1.5)
-		apply_central_force(-linear_velocity * 1800.0 * dk)
+		apply_central_force(-linear_velocity * 1800.0 * dk * mass / 2500.0)
 		apply_central_force(Vector3.UP * mass * g * 0.25 * clampf(depth - 0.6, 0.0, 1.0))
 
 	# ---- stats
@@ -1307,12 +1718,37 @@ func _simulate(delta: float) -> void:
 	for w in wheels:
 		if w.slip > 0.2:
 			any_slip = true
-	var stuck_now := throttle > 0.3 and speed < 0.3 and (any_slip or avg_sink > 0.25)
+	var stuck_now := throttle > 0.3 and speed < 0.3 and (any_slip or avg_sink > 0.25) and can_bog()
 	_bog_timer = clampf(_bog_timer + (delta if stuck_now else -delta * 2.0), 0.0, 3.0)
 	var b_now := _bog_timer > 1.5
 	if b_now != is_bogged:
 		is_bogged = b_now
 		bogged_changed.emit(is_bogged)
+
+
+func on_ground_n() -> int:
+	var n := 0
+	for w in wheels:
+		if w.grounded:
+			n += 1
+	return n
+
+
+## The dirt bike balances itself (its rider does, really): a roll spring keeps the frame
+## upright while any wheel is down, a gentler one in the air. The lean you see is visual.
+func _hold_upright(grounded: int, delta: float) -> void:
+	var fwd := -global_basis.z
+	var roll := asin(clampf(global_basis.x.y, -1.0, 1.0))   # + = right side up
+	var roll_rate := angular_velocity.dot(fwd)
+	var k := 2600.0 if grounded > 0 else 900.0
+	var c := 420.0 if grounded > 0 else 160.0
+	# torque about the forward axis that drops the high side back down
+	apply_torque(fwd * (roll * k - roll_rate * c))
+	# and keep it from looping out on landings
+	var pitch_rate := angular_velocity.dot(global_basis.x)
+	if grounded == 0:
+		apply_torque(global_basis.x * (-pitch_rate * 120.0))
+	var _unused := delta
 
 
 func _drive_axle(il: int, ir: int, f_axle: float, locked: bool, _delta: float) -> void:
@@ -1378,6 +1814,19 @@ func _process(delta: float) -> void:
 		_door_was = _door
 		_door = move_toward(_door, door_target, delta * 3.2)
 		door_pivot.rotation.y = smoothstep(0.0, 1.0, _door) * 1.2
+	if kind == "bike" and body:
+		# lean into the corner like a real rider (also on other players' screens)
+		var v := absf(speed_kmh) / 3.6
+		var yaw_rate := v * tan(steer) / (float(spec["z"]) * 2.0)
+		var target := clampf(atan(v * yaw_rate / 9.81), -0.6, 0.6) if driver_present else 0.0
+		_lean = lerpf(_lean, target, minf(1.0, delta * 6.0))
+		var ground_y := -rest_length - wheel_radius
+		var pivot := Vector3(0, ground_y, 0)
+		var b := Basis(Vector3.BACK, _lean)
+		body.transform = Transform3D(b, pivot - b * pivot)
+	var bars := body.get_node_or_null("Visual/Bars") as Node3D if body else null
+	if bars:
+		bars.rotation.y = steer * 0.8
 	for w in wheels:
 		var susp := rest_length - w.comp if w.grounded else rest_length
 		w.pivot.position = w.mount - Vector3(0, susp, 0)

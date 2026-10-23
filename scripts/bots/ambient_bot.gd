@@ -1002,6 +1002,9 @@ func _look_for_stuck() -> void:
 		_decided[sb.name] = true
 		if sb.rescuer != null or not _main.ropes.ropes_on(String(sb.car.name)).is_empty():
 			continue
+		if car.kind != "ute" or not sb.car.can_recover():
+			car.wave(true)   # a buggy or a bike can't snatch a ute out: just a wave
+			continue
 		if randf() < bots.help_chance:
 			sb.rescuer = self
 			plan.clear()
@@ -1015,7 +1018,7 @@ func _look_for_stuck() -> void:
 
 
 func _hook_span(sc: SandVehicle) -> float:
-	return (car.global_transform * SandVehicle.FRONT_POINT).distance_to(sc.global_transform * SandVehicle.REAR_POINT)
+	return (car.global_transform * car.front_point()).distance_to(sc.global_transform * sc.rear_point())
 
 
 func _rescue_rope(sc: SandVehicle) -> String:
@@ -1088,7 +1091,7 @@ func _rescue(st: Dictionary, delta: float) -> bool:
 		"nudge":
 			# roll up to their tow bar at walking pace, then lean on it in low range
 			var k := t - float(st["ct"])
-			var hook := sc.global_transform * SandVehicle.REAR_POINT
+			var hook := sc.global_transform * sc.rear_point()
 			if not st.has("bp"):
 				st["bp"] = car.bog_proof
 			car.bog_proof = true   # don't dig ourselves in while we're shoving
@@ -1122,7 +1125,7 @@ func _rescue(st: Dictionary, delta: float) -> bool:
 				st["ct"] = t
 		"creep":
 			var span := _hook_span(sc)
-			var hook := sc.global_transform * SandVehicle.REAR_POINT
+			var hook := sc.global_transform * sc.rear_point()
 			var v := car.linear_velocity.dot(-car.global_basis.z)
 			if v < -1.0:
 				driver.stop(delta)
@@ -1153,11 +1156,11 @@ func _rescue(st: Dictionary, delta: float) -> bool:
 			if not st.has("bar"):
 				# our bullbar first (grab the strap end), then their tow hitch
 				st["ht"] = st.get("ht", t)
-				if walk_to(car.global_transform * SandVehicle.FRONT_POINT, false, 1.3) or t - float(st["ht"]) > 20.0:
+				if walk_to(car.global_transform * car.front_point(), false, 1.3) or t - float(st["ht"]) > 20.0:
 					st["bar"] = t
 				return false
 			if not st.has("at"):
-				var hitch := sc.global_transform * SandVehicle.REAR_POINT
+				var hitch := sc.global_transform * sc.rear_point()
 				if not walk_to(hitch, false, 1.3) and t - float(st["bar"]) < 25.0:
 					return false
 				st["at"] = t
@@ -1170,8 +1173,8 @@ func _rescue(st: Dictionary, delta: float) -> bool:
 				_say("Strap won't reach, sorry %s!" % s.short_name())
 				st["ph"] = "leave"
 				return false
-			_main.ropes.create("strap", {"car": String(car.name), "p": SandVehicle.FRONT_POINT},
-				{"car": String(sc.name), "p": SandVehicle.REAR_POINT}, Ropes.STRAP_LEN)
+			_main.ropes.create("strap", {"car": String(car.name), "p": car.front_point()},
+				{"car": String(sc.name), "p": sc.rear_point()}, Ropes.STRAP_LEN)
 			_say("Strap's on! Jump in and give it some gas when I pull, %s!" % s.short_name())
 			st["ph"] = "back_in"
 			st["bt"] = t
@@ -1242,7 +1245,7 @@ func _rescue(st: Dictionary, delta: float) -> bool:
 			if person.state != PlayerCharacter.State.ON_FOOT:
 				return false
 			st["ut"] = st.get("ut", t)
-			if walk_to(car.global_transform * SandVehicle.FRONT_POINT, false, 1.3) or t - float(st["ut"]) > 20.0:
+			if walk_to(car.global_transform * car.front_point(), false, 1.3) or t - float(st["ut"]) > 20.0:
 				_main.ropes.remove(rope)
 				st["ph"] = "leave"
 		"leave":

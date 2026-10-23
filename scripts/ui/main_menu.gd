@@ -466,8 +466,9 @@ func _build_custom() -> Control:
 			pcols.append(c[1])
 		_swatches(vb, pcols, Pet.colour_of(main.pet_kind, main.pet_col), func(c: Color) -> void:
 			main.set_look("pet_col", pcols.find(c)))
+	_choices(vb, "Ride", SandVehicle.KIND_NAMES, main.vehicle_kind, func(k: String) -> void: main.set_look("vehicle", k), 2)
 	var ul := Label.new()
-	ul.text = "Ute colour"
+	ul.text = "Paint"
 	ul.add_theme_font_override("font", UiTheme.font(true))
 	vb.add_child(ul)
 	_swatches(vb, main.CAR_PAINTS, main.car_color, func(c: Color) -> void: main.set_look("car_color", c))

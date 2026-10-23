@@ -153,6 +153,11 @@ func _rpc_length(id: String, rest: float) -> void:
 
 
 # ------------------------------------------------------------- physics
+func _mass_of(an: Dictionary) -> float:
+	var c := _car(an)
+	return c.mass if c else 1.0e9   # a tree doesn't move
+
+
 func _car(an: Dictionary) -> SandVehicle:
 	if not an.has("car") or cars_root == null:
 		return null
@@ -199,6 +204,11 @@ func _physics_process(delta: float) -> void:
 			else:
 				t = WINCH_K * ext + WINCH_DAMP * stretch_rate
 				t = clampf(t, 0.0, WINCH_MAX * 1.6)
+		# a strap tuned for 2.5 t utes would fling a buggy or a quad: scale the pull to the
+		# lighter machine on the line
+		var light := minf(_mass_of(r["a"]), _mass_of(r["b"]))
+		if light < 2500.0:
+			t *= maxf(light / 2500.0, 0.15)
 		r["tension"] = t
 		r["peak"] = maxf(float(r["peak"]) * 0.98, t)
 		# the strap "twangs" as it snaps taut

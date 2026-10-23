@@ -255,7 +255,7 @@ func _nearest_hitch() -> Dictionary:
 		var car := c as SandVehicle
 		if car == null:
 			continue
-		var p := car.global_transform * SandVehicle.REAR_POINT
+		var p := car.global_transform * car.rear_point()
 		var d := p.distance_to(player.global_position + Vector3.UP * 0.3)
 		if d < bd:
 			bd = d
@@ -268,7 +268,7 @@ func _hitch(car: SandVehicle) -> void:
 		return
 	victim.request_lasso(String(player.name), String(car.name), -1.0)
 	tools._toast("%s's hitched to the towbar - take 'em for a spin!" % _name_of(victim))
-	Sfx.play_at(self, "thunk", car.global_transform * SandVehicle.REAR_POINT, -4.0)
+	Sfx.play_at(self, "thunk", car.global_transform * car.rear_point(), -4.0)
 	_main.achievements.unlock("hitched")
 	victim = null
 

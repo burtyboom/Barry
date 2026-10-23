@@ -105,7 +105,8 @@ func _draw() -> void:
 
 	# --- the ute from above, with its tyres
 	var c := Vector2(W * 0.5, 208)
-	var body := Rect2(c - Vector2(30, 46), Vector2(60, 92))
+	var bike := car.kind == "bike"
+	var body := Rect2(c - Vector2(30, 46), Vector2(60, 92)) if not bike else Rect2(c - Vector2(9, 40), Vector2(18, 80))
 	var bsb := StyleBoxFlat.new()
 	bsb.bg_color = car.body_color.darkened(0.15)
 	bsb.set_corner_radius_all(14)
@@ -113,11 +114,18 @@ func _draw() -> void:
 	var cab := StyleBoxFlat.new()
 	cab.bg_color = Color(0.75, 0.9, 1.0, 0.55)
 	cab.set_corner_radius_all(6)
-	draw_style_box(cab, Rect2(c + Vector2(-22, -30), Vector2(44, 18)))   # windscreen (front = up)
-	draw_rect(Rect2(c + Vector2(-22, 6), Vector2(44, 32)), Color(0, 0, 0, 0.18))   # tub
+	if car.kind == "ute":
+		draw_style_box(cab, Rect2(c + Vector2(-22, -30), Vector2(44, 18)))   # windscreen (front = up)
+		draw_rect(Rect2(c + Vector2(-22, 6), Vector2(44, 32)), Color(0, 0, 0, 0.18))   # tub
+	elif bike:
+		draw_rect(Rect2(c + Vector2(-26, -30), Vector2(52, 4)), Color(0.8, 0.8, 0.85))   # handlebars
 	var spots := [Vector2(-40, -30), Vector2(40, -30), Vector2(-40, 30), Vector2(40, 30)]
+	if bike:
+		spots = [Vector2(0, -34), Vector2.ZERO, Vector2(0, 34), Vector2.ZERO]
 	for k in 4:
 		var wh: SandVehicle.Wheel = car.wheels[k]
+		if wh.ghost:
+			continue
 		var p: Vector2 = c + spots[k]
 		var depth := clampf(wh.sink / car.max_sink, 0.0, 1.0)
 		var tc := Color(0.30, 0.85, 0.40).lerp(Color(1.0, 0.6, 0.15), clampf(depth * 2.0, 0, 1)).lerp(Color(0.95, 0.2, 0.15), clampf(depth * 2.0 - 1.0, 0, 1))
@@ -131,7 +139,7 @@ func _draw() -> void:
 		tsb.set_border_width_all(3)
 		draw_style_box(tsb, Rect2(p - Vector2(9, 15), Vector2(18, 30)))
 		# pressure label beside the tyre
-		var left := k % 2 == 0
+		var left := k % 2 == 0 and not bike
 		var txt := "FLAT" if wh.flat else "%d" % roundi(wh.psi)
 		var pc := Color.WHITE
 		if not wh.flat and wh.psi <= 20.0:

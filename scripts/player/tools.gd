@@ -264,7 +264,7 @@ func _process(delta: float) -> void:
 		else:
 			_compressor.stop()
 	if pumping and player and player.car:
-		_compressor.global_position = player.car.global_transform * SandVehicle.HOSE_POINT
+		_compressor.global_position = player.car.global_transform * player.car.hose_point()
 	if _held:
 		_held.visible = player != null and player.is_on_foot()
 	_aim_rod(delta)
@@ -309,10 +309,10 @@ func _recovery_points() -> Array:
 	var out := []
 	for c in _cars():
 		var car := c as SandVehicle
-		if car == null:
-			continue
-		out.append({"car": car, "p": SandVehicle.FRONT_POINT, "pos": car.global_transform * SandVehicle.FRONT_POINT, "label": "bullbar"})
-		out.append({"car": car, "p": SandVehicle.REAR_POINT, "pos": car.global_transform * SandVehicle.REAR_POINT, "label": "tow hitch"})
+		if car == null or not car.can_recover():
+			continue   # (the dirt bike has nothing to hook onto, and never needs it)
+		out.append({"car": car, "p": car.front_point(), "pos": car.global_transform * car.front_point(), "label": "bullbar"})
+		out.append({"car": car, "p": car.rear_point(), "pos": car.global_transform * car.rear_point(), "label": "tow hitch"})
 	return out
 
 
@@ -359,7 +359,8 @@ func _nearest_tree(max_d: float) -> Vector3:
 
 
 func _car_name(car: SandVehicle) -> String:
-	return "your ute" if car == player.car else "their ute"
+	var what := "ute" if car.kind == "ute" else String(SandVehicle.KIND_NAMES[car.kind]).to_lower()
+	return ("your " if car == player.car else "their ") + what
 
 
 func _find_interaction() -> void:
@@ -367,7 +368,7 @@ func _find_interaction() -> void:
 	var pos := player.global_position
 	var ropes: Ropes = _main.ropes
 	if _carrying_winch:
-		var winch_pos := own.global_transform * SandVehicle.FRONT_POINT
+		var winch_pos := own.global_transform * own.front_point()
 		if winch_pos.distance_to(pos) > Ropes.WINCH_MAX_LEN:
 			_carrying_winch = false
 			_toast("The winch cable is fully out - hook dropped back")
@@ -394,10 +395,10 @@ func _find_interaction() -> void:
 		var other := c as SandVehicle
 		if other == null or other == own or not other.local_control or other.driver_present or other.has_meta("bot"):
 			continue
-		var spot := other.global_transform * PlayerCharacter.OUTSIDE
+		var spot := other.global_transform * other.outside_point()
 		spot.y = player.island.height_at(spot.x, spot.z)
 		if spot.distance_to(pos) < 1.7:
-			prompt = "[E] Get in this ute"
+			prompt = "[E] Get in this ute" if other.kind == "ute" else "[E] Hop on this %s" % String(SandVehicle.KIND_NAMES[other.kind]).to_lower()
 			_action = func() -> void:
 				if own:
 					own.driver_present = false
@@ -410,7 +411,7 @@ func _find_interaction() -> void:
 		prompt = "[E] Unhook the %s" % ("strap" if kind == "strap" else "winch cable")
 		_action = func() -> void: ropes.remove(end["id"])
 		return
-	if own and (own.global_transform * SandVehicle.FRONT_POINT).distance_to(pos + Vector3.UP * 0.6) < 2.0 \
+	if own and own.has_winch() and (own.global_transform * own.front_point()).distance_to(pos + Vector3.UP * 0.6) < 2.0 \
 			and ropes.winch_rope_of(String(own.name)) == "":
 		prompt = "[E] Pull out the winch cable"
 		_action = func() -> void:
@@ -444,10 +445,10 @@ func _sit(chair: Dictionary) -> void:
 
 func _attach_winch(anchor: Dictionary) -> void:
 	var own := player.car
-	var wpos := own.global_transform * SandVehicle.FRONT_POINT
+	var wpos := own.global_transform * own.front_point()
 	var ropes: Ropes = _main.ropes
 	var target := ropes.anchor_pos(anchor)
-	ropes.create("winch", {"car": String(own.name), "p": SandVehicle.FRONT_POINT}, anchor, wpos.distance_to(target) + 0.3)
+	ropes.create("winch", {"car": String(own.name), "p": own.front_point()}, anchor, wpos.distance_to(target) + 0.3)
 	_carrying_winch = false
 	select(Items.REMOTE)
 	_toast("Winch hooked on! Winch remote in hand: hold left click to winch in, right click to let out. In the cab: the big WINCH button or G / H")
@@ -497,7 +498,7 @@ func _update_item(delta: float) -> void:
 		"inflator":
 			player.pose_override = "hold"
 			var own := player.car
-			var hose_ok := own != null and (own.global_transform * SandVehicle.HOSE_POINT).distance_to(player.global_position) < HOSE_LEN
+			var hose_ok := own != null and (own.global_transform * own.hose_point()).distance_to(player.global_position) < HOSE_LEN
 			var v := _nearest_valve(1.7)
 			hint = "Hold left click on a tyre to pump it up (the hose reaches %d m from your tub)" % int(HOSE_LEN)
 			if not hose_ok:
@@ -1116,12 +1117,12 @@ func _draw_lines() -> void:
 		return
 	var hand := player.avatar.hand_r.global_position
 	if _carrying_winch and player.car:
-		_ribbon(im, player.car.global_transform * SandVehicle.FRONT_POINT, hand, 0.4, 0.02, Color(0.16, 0.16, 0.18))
+		_ribbon(im, player.car.global_transform * player.car.front_point(), hand, 0.4, 0.02, Color(0.16, 0.16, 0.18))
 	elif item()["id"] == "strap" and not _strap_a.is_empty() and is_instance_valid(_strap_a["car"]):
 		var a := (_strap_a["car"] as SandVehicle).global_transform * (_strap_a["p"] as Vector3)
 		_ribbon(im, a, hand, 0.6, 0.07, Color(1.0, 0.82, 0.10))
 	elif item()["id"] == "inflator" and player.car:
-		var hose := player.car.global_transform * SandVehicle.HOSE_POINT
+		var hose := player.car.global_transform * player.car.hose_point()
 		if hose.distance_to(hand) < HOSE_LEN + 1.0:
 			_ribbon(im, hose, hand, 0.8, 0.018, Color(0.08, 0.08, 0.09))
 

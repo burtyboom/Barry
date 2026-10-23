@@ -66,6 +66,14 @@ func brains() -> Array[BotBrain]:
 	return out
 
 
+## What a bot turns up in: mostly a 4WD (the helper and emergency services always are),
+## now and then a buggy, a quad or a dirt bike.
+func random_kind(role: String) -> String:
+	if role == "helper" or role in EMERGENCY or randf() >= 0.2:
+		return "ute"
+	return ["buggy", "quad", "bike"].pick_random()
+
+
 ## A role for a random island bot. Emergency services are rare unless the admin
 ## switch says otherwise.
 func random_role(emergency := true) -> String:
@@ -424,10 +432,11 @@ func spawn(role: String, near := Vector3.INF, quiet := false) -> String:
 		# dress them up: pirate hats, flannos, clown shoes...
 		var bc: Color = Color(0.55, 0.90, 0.20) if ci >= COLOURS.size() else COLOURS[ci]
 		style = Avatar.random_spec(style, bc.darkened(0.15))
+	var kind := random_kind(role)
 	if _online():
-		_rpc_spawn.rpc(nm, role, xf, me, style, ci, who)
+		_rpc_spawn.rpc(nm, role, xf, me, style, ci, who, kind)
 	else:
-		_rpc_spawn(nm, role, xf, me, style, ci, who)
+		_rpc_spawn(nm, role, xf, me, style, ci, who, kind)
 	if quiet:
 		pass
 	elif role == "helper":
@@ -504,15 +513,16 @@ func _car_near(p: Vector3, r: float) -> bool:
 
 
 @rpc("any_peer", "call_local", "reliable")
-func _rpc_spawn(nm: String, role: String, xf: Transform3D, owner_id: int, style: String, ci: int, who: String) -> void:
+func _rpc_spawn(nm: String, role: String, xf: Transform3D, owner_id: int, style: String, ci: int, who: String, kind := "ute") -> void:
 	if _main.world == null:
-		_pending.append([nm, role, xf, owner_id, style, ci, who])
+		_pending.append([nm, role, xf, owner_id, style, ci, who, kind])
 		return
 	if _main.cars.has_node(nm):
 		return
 	var mine := owner_id == multiplayer.get_unique_id()
 	var car := SandVehicle.new()
 	car.name = nm
+	car.kind = kind
 	car.body_color = Color(0.55, 0.90, 0.20) if ci >= COLOURS.size() else COLOURS[ci]
 	if role in EMERGENCY:
 		car.livery = role
@@ -590,7 +600,7 @@ func _rpc_remove(nm: String) -> void:
 func sync_to(peer: int) -> void:
 	for b in brains():
 		_rpc_spawn.rpc_id(peer, String(b.car.name), b.role, b.car.global_transform,
-			multiplayer.get_unique_id(), b.style, b.colour_i, b.display)
+			multiplayer.get_unique_id(), b.style, b.colour_i, b.display, b.car.kind)
 		if b is AmbientBot and (b as AmbientBot).needs_help:
 			_rpc_help.rpc_id(peer, String(b.person.name), true)
 

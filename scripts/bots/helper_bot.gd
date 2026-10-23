@@ -106,6 +106,9 @@ func _begin_self_hook(kind: String) -> void:
 	var lead := lead_car()
 	if lead == null:
 		return
+	if not lead.can_recover():
+		_say("you're on a dirt bike, mate - nothing to hook onto, and you can't get stuck anyway!")
+		return
 	if not _rope_to_lead().is_empty():
 		_say("there's already a line on - send it or unhook it first")
 		return
@@ -121,6 +124,10 @@ func _begin_self_hook(kind: String) -> void:
 
 ## Helper button "Nudge me out!": drive round to your back bumper and push straight away.
 func nudge_me() -> void:
+	var lead := lead_car()
+	if lead and not lead.can_bog():
+		_say("a nudge? On a dirt bike? Just give it some throttle, legend!")
+		return
 	come("rear")
 	_nudge_wait = 0.5
 	_say("coming round to give you a shove - give it some gas when I'm on your bumper!")
@@ -390,7 +397,7 @@ func _assist(delta: float, lead: SandVehicle) -> void:
 				_set_phase("ready")
 				return
 			car.low_range = true
-			var hook := lead.global_transform * SandVehicle.REAR_POINT
+			var hook := lead.global_transform * lead.rear_point()
 			# ease on, then more and more right foot (it takes a bit to get rolling in soft sand)
 			driver.pull(1.0, clampf(0.4 + _phase_t * 0.12, 0.4, 0.9), delta, driver.steer_toward(hook, false))
 			driver.status = "nudging you out - give it some gas!"
@@ -523,7 +530,7 @@ func _approach(delta: float, lead: SandVehicle) -> void:
 		var span := _hook_span(lead)
 		var toward := 1.0 if assist_side == "rear" else -1.0
 		driver.status = "creeping in - %.1f m between hooks" % span
-		var hook := lead.global_transform * (SandVehicle.REAR_POINT if assist_side == "rear" else SandVehicle.FRONT_POINT)
+		var hook := lead.global_transform * (lead.rear_point() if assist_side == "rear" else lead.front_point())
 		var v := car.linear_velocity.dot(-car.global_basis.z)
 		if absf(v) > 1.0 and signf(v) != toward:
 			driver.stop(delta)   # still rolling the wrong way: stop first
@@ -622,11 +629,11 @@ func _hook_up(delta: float, lead: SandVehicle) -> void:
 			_hook_step = "bar"
 			_hook_t = 0.0
 		"bar":
-			if walk_to(car.global_transform * SandVehicle.FRONT_POINT, false, 1.3) or _hook_t > 20.0:
+			if walk_to(car.global_transform * car.front_point(), false, 1.3) or _hook_t > 20.0:
 				_hook_step = "hitch"
 				_hook_t = 0.0
 		"hitch":
-			if walk_to(lead.global_transform * SandVehicle.REAR_POINT, false, 1.3) or _hook_t > 25.0:
+			if walk_to(lead.global_transform * lead.rear_point(), false, 1.3) or _hook_t > 25.0:
 				person.ai_move = Vector3.ZERO
 				_hook_step = "tie"
 				_hook_t = 0.0
@@ -639,8 +646,8 @@ func _hook_up(delta: float, lead: SandVehicle) -> void:
 			if _self_hook == "strap" and span > Ropes.STRAP_LEN - 0.3:
 				_self_hook = "winch"
 				_say("strap won't reach from here (%.0f m) - I'll winch you instead" % span)
-			var mine := {"car": String(car.name), "p": SandVehicle.FRONT_POINT}
-			var yours := {"car": String(lead.name), "p": SandVehicle.REAR_POINT}
+			var mine := {"car": String(car.name), "p": car.front_point()}
+			var yours := {"car": String(lead.name), "p": lead.rear_point()}
 			if _self_hook == "winch":
 				_main.ropes.create("winch", mine, yours, span + 0.3)
 			else:
@@ -666,7 +673,7 @@ func _unhook(delta: float, lead: SandVehicle, rope: Dictionary) -> void:
 		return
 	if person.state != PlayerCharacter.State.ON_FOOT:
 		return
-	var hitch := lead.global_transform * SandVehicle.REAR_POINT
+	var hitch := lead.global_transform * lead.rear_point()
 	if not walk_to(hitch, false, 1.3) and _hook_t < 30.0:
 		return
 	person.ai_move = Vector3.ZERO
@@ -680,8 +687,8 @@ func _unhook(delta: float, lead: SandVehicle, rope: Dictionary) -> void:
 ## (helping from behind) or our tow hitch to your bullbar (from in front).
 func _hook_span(lead: SandVehicle) -> float:
 	if assist_side == "rear":
-		return (car.global_transform * SandVehicle.FRONT_POINT).distance_to(lead.global_transform * SandVehicle.REAR_POINT)
-	return (car.global_transform * SandVehicle.REAR_POINT).distance_to(lead.global_transform * SandVehicle.FRONT_POINT)
+		return (car.global_transform * car.front_point()).distance_to(lead.global_transform * lead.rear_point())
+	return (car.global_transform * car.rear_point()).distance_to(lead.global_transform * lead.front_point())
 
 
 func _parked() -> void:

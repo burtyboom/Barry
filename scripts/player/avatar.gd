@@ -39,6 +39,8 @@ var _arm_l_z := 0.0
 var _arm_r_z := 0.0
 var _leg_l_x := 0.0
 var _leg_r_x := 0.0
+var _leg_l_z := 0.0
+var _leg_r_z := 0.0
 var _lean := 0.0
 var _lift := 0.0           ## raises the body off the ground when lying prone (crawling)
 ## googly eyes: [{pupil, base (pupil rest spot), r (how far it can roll), off, vel, inner (+1/-1 toward the nose)}]
@@ -531,6 +533,8 @@ func animate(delta: float, pose: String, speed: float) -> void:
 	var tl_r := 0.0
 	var lean := 0.0
 	var lift := 0.0
+	var sl_l := 0.0     # legs out to the side (riding astride)
+	var sl_r := 0.0
 	match pose:
 		"walk", "run", "swim", "walk_hold", "run_hold":
 			var running := pose == "run" or pose == "run_hold"
@@ -635,6 +639,17 @@ func animate(delta: float, pose: String, speed: float) -> void:
 			ta_r = -2.6
 			tz_l = 0.4
 			tz_r = -0.4
+		"ride":
+			# astride a quad / dirt bike: knees forward and out, hands on the bars
+			tl_l = 0.6
+			tl_r = 0.6
+			sl_l = 0.28
+			sl_r = -0.28
+			ta_l = 1.25
+			ta_r = 1.25
+			tz_l = -0.18
+			tz_r = 0.18
+			lean = 0.22
 		"sit", "drive":
 			tl_l = PI * 0.5
 			tl_r = PI * 0.5
@@ -683,6 +698,10 @@ func animate(delta: float, pose: String, speed: float) -> void:
 	arm_r.rotation = Vector3(_arm_r_x, 0, _arm_r_z)
 	leg_l.rotation.x = _leg_l_x
 	leg_r.rotation.x = _leg_r_x
+	_leg_l_z = lerpf(_leg_l_z, sl_l, k)
+	_leg_r_z = lerpf(_leg_r_z, sl_r, k)
+	leg_l.rotation.z = _leg_l_z
+	leg_r.rotation.z = _leg_r_z
 	torso.rotation.x = -_lean
 	torso.position.y = bob + _lift
 	_wobble_eyes(delta, speed if pose != "flail" else 6.0)
