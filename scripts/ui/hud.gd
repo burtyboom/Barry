@@ -12,11 +12,8 @@ var _charge_bar: ColorRect
 var island: IslandData
 var cars_root: Node
 
-var _info: Label
-var _tyres: Array[Label] = []
-var _tyre_bars: Array[ColorRect] = []
+var dash: Dash
 var _bogged: Label
-var _help: Label
 var _debug: Label
 var _map_tex: ImageTexture
 var minimap: Minimap
@@ -37,29 +34,6 @@ var _winch_out_btn: Button
 
 const MAP_DIV := 2   # minimap = 1 pixel per 2 cells (5 m)
 
-const HELP_TEXT := """DRIVING
-W / S        throttle / brake (hold S when stopped = reverse)
-A / D        steer        Space  handbrake
-L            low range 4L / 4H (under 8 km/h)
-X / Z        rear / front diff locker
-1/2/3/4      tyres 32 / 18 / 15 / 12 psi    [ / ]  -1 / +1 psi
-G / H        winch in / out (or the big WINCH buttons)
-F            horn         E  get out (when stopped)
-ON FOOT
-WASD walk, Shift run, Space jump, right-drag look around
-E            get in / sit / grab winch hook / unhook
-1-0 or wheel hotbar (same key again = put it away)
--            winch remote: hold Q in / E out (once the winch is hooked on)
-Left click use / place, Q pick up
-Camp gear: point with the mouse, hold right + drag to spin
-Fishing: aim the ring at the water - green = in reach
-OTHER
-C camera   M big map   T next place   N music on/off
-Y wave   Enter chat   V (hold) talk   ` console
-R recover / flip ute (in it or near it)
-Helper button: spawn your helper, ask it to pull or nudge you out
-F3 debug   F5 / F6 sand softness   F11 fullscreen   F1 hide help"""
-
 
 ## True while you're typing in chat / the console (driving and walking keys are ignored).
 static func typing() -> bool:
@@ -74,38 +48,11 @@ func _ready() -> void:
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(root)
 
-	var panel := PanelContainer.new()
-	panel.position = Vector2(16, 16)
-	panel.add_theme_stylebox_override("panel", _style(Color(0, 0, 0, 0.55)))
-	root.add_child(panel)
-	var vb := VBoxContainer.new()
-	panel.add_child(vb)
-	_info = Label.new()
-	_info.add_theme_font_size_override("font_size", 18)
-	vb.add_child(_info)
-
-	# tyre diagram (top view)
-	var grid := GridContainer.new()
-	grid.columns = 2
-	grid.add_theme_constant_override("h_separation", 46)
-	grid.add_theme_constant_override("v_separation", 10)
-	vb.add_child(grid)
-	for i in 4:
-		var box := VBoxContainer.new()
-		var l := Label.new()
-		l.add_theme_font_size_override("font_size", 20)
-		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		box.add_child(l)
-		var bg := ColorRect.new()
-		bg.custom_minimum_size = Vector2(90, 8)
-		bg.color = Color(1, 1, 1, 0.15)
-		box.add_child(bg)
-		var bar := ColorRect.new()
-		bar.size = Vector2(0, 8)
-		bg.add_child(bar)
-		grid.add_child(box)
-		_tyres.append(l)
-		_tyre_bars.append(bar)
+	dash = Dash.new()
+	dash.name = "Dash"
+	dash.main = get_parent()
+	dash.position = Vector2(16, 16)
+	root.add_child(dash)
 
 	_bogged = Label.new()
 	_bogged.text = "BOGGED!"
@@ -133,16 +80,20 @@ func _ready() -> void:
 	_toast.offset_top = -330.0
 	_toast.offset_bottom = -200.0
 
-	_help = Label.new()
-	_help.text = HELP_TEXT
-	_help.add_theme_font_size_override("font_size", 13)
-	var hp := PanelContainer.new()
-	hp.add_theme_stylebox_override("panel", _style(Color(0, 0, 0, 0.5)))
-	hp.add_child(_help)
+	var hp := HelpCard.new()
 	hp.name = "HelpPanel"
 	root.add_child(hp)
-	hp.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT, Control.PRESET_MODE_MINSIZE, 16)
-	hp.offset_top = 262.0
+	hp.position = Vector2(16, 326)
+	var f1 := Label.new()
+	f1.text = "  F1  controls  "
+	f1.add_theme_font_override("font", UiTheme.font(true))
+	f1.add_theme_font_size_override("font_size", 13)
+	f1.add_theme_color_override("font_color", Color(1, 1, 1, 0.8))
+	f1.add_theme_stylebox_override("normal", UiTheme.panel(Color(0.05, 0.10, 0.17, 0.6), 10, 5))
+	f1.position = Vector2(16, 326)
+	f1.visible = false
+	root.add_child(f1)
+	hp.visibility_changed.connect(func() -> void: f1.visible = not hp.visible)
 	# tuck the help away after a while (F1 brings it back)
 	get_tree().create_timer(25.0).timeout.connect(func() -> void: hp.visible = false)
 
@@ -901,54 +852,9 @@ func _process(delta: float) -> void:
 	_toast.visible = _toast_t > 0.0
 	var v: Voice = get_parent().get("voice")
 	_talk_chip.visible = v != null and v.talking_local
+	dash.car = car if car and is_instance_valid(car) else null
 	if car == null or not is_instance_valid(car):
-		_info.text = "Waiting for car..."
 		return
-	var where := island.nearest_place(car.global_position)
-	var range_txt := "4L" if car.low_range else "4H"
-	var lockers := ""
-	if car.front_locker:
-		lockers += " F-LOCK"
-	if car.rear_locker:
-		lockers += " R-LOCK"
-	var gear := "R" if car.reversing else "D"
-	_info.text = "%3d km/h   %s %s%s\n%s  (softness %d%%)\nNear: %s" % [
-		absi(roundi(car.speed_kmh)), gear, range_txt, lockers,
-		car.surface_name, roundi(car.avg_soft * 100.0),
-		where if where != "" else island.display_name]
-	_info.text += "
-" + Tide.describe()
-	if car.water_depth > 0.3:
-		_info.text += "
-Water %.1f m deep!" % car.water_depth
-	if island.softness_mult != 1.0:
-		_info.text += "\nSand x%.2f (F5/F6)" % island.softness_mult
-	var fines: int = get_parent().fines_total
-	if fines > 0:
-		_info.text += "\nSpeeding fines: $%d" % fines
-	var skittled: int = get_parent().bonks_given
-	var flight: float = get_parent().longest_flight
-	if skittled > 0 or flight > 0.0:
-		_info.text += "\nSkittled: %d   Longest flight: %.1f m" % [skittled, flight]
-	var order := [0, 1, 2, 3]   # FL FR / RL RR
-	for k in 4:
-		var w: SandVehicle.Wheel = car.wheels[order[k]]
-		var spin := " ~" if w.slip > 0.15 else ""
-		var squirm := w.bead_risk > SandVehicle.BEAD_LIMIT * 0.3
-		if squirm:
-			spin = " !!"   # sidewall folding over - ease off or it'll roll the bead
-		_tyres[k].text = "%s FLAT!" % w.name if w.flat else "%s %d psi%s" % [w.name, roundi(w.psi), spin]
-		var depth := clampf(w.sink / car.max_sink, 0.0, 1.0)
-		_tyre_bars[k].size = Vector2(90.0 * depth, 8)
-		_tyre_bars[k].color = Color(0.3, 0.9, 0.3).lerp(Color(1, 0.15, 0.1), depth)
-		var pc := Color.WHITE
-		if w.psi <= 20.0:
-			pc = Color(1.0, 0.85, 0.3)
-		if absf(car.speed_kmh) > 60.0 and w.psi < 22.0:
-			pc = Color(1, 0.3, 0.3)   # too fast for aired-down tyres
-		if w.flat or squirm:
-			pc = Color(1, 0.2, 0.2)
-		_tyres[k].add_theme_color_override("font_color", pc)
 	_bogged.visible = car.is_bogged
 	if _debug.visible:
 		var t := ""
