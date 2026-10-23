@@ -347,6 +347,11 @@ func can_bog() -> bool:
 	return kind != "bike"
 
 
+## Quads and bikes throw you off when they go over (no climbing out of those).
+func throws_rider() -> bool:
+	return kind == "quad" or kind == "bike"
+
+
 ## Open machines show the rider sitting on / in them; the ute hides you in the cab.
 func rider_visible() -> bool:
 	return kind != "ute"
@@ -1308,7 +1313,8 @@ func _on_local_rollover() -> void:
 	var ach: Node = m.get("achievements")
 	if ach:
 		ach.unlock("rollover")
-	_toast("You've rolled it! Climb out (E) or press R to flip it back on its wheels")
+	if not throws_rider():   # (quad / bike riders already got told as they came off)
+		_toast("You've rolled it! Climb out (E) or press R to flip it back on its wheels")
 
 
 func teleport(pos: Vector3, heading := Vector3.FORWARD) -> void:

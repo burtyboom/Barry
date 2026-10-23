@@ -74,7 +74,9 @@ var _lasso_cd := 0.0         ## just wriggled free: can't be caught again for a 
 var _tie_anchor_last := Vector3.INF
 var _tie_tumble := 0.0
 var _tie_rope: MeshInstance3D
-var _exit_kind := 0          ## how we're getting out: 0 door, 1 climb out the top, 2 crawl out from under
+var _exit_kind := 0          ## how we're getting out: 0 door, 1 climb out the top, 2 crawl out from under, 3 thrown off (quad / bike)
+var _throw_vel := Vector3.ZERO   ## thrown off: flying through the air
+var _throw_land := -1.0          ## thrown off: when we hit the sand (_t), -1 while still airborne
 static var _hp_tex := {}
 # network
 var _net_timer := 0.0
@@ -537,6 +539,9 @@ func _physics_process(delta: float) -> void:
 		State.IN_CAR:
 			_follow_seat()
 			avatar.animate(delta, car.ride_pose() if car else "drive", 0.0)
+			# quads and bikes don't keep you on board when they go over (bots just ride it out)
+			if not ai and car and car.throws_rider() and car.carrier == null and car.global_basis.y.y < 0.35:
+				_throw_off()
 		State.EXITING:
 			_run_exit(delta)
 		State.ENTERING:
@@ -618,6 +623,139 @@ func _toast(text: String) -> void:
 		m.hud.show_toast(text)
 
 
+## Quad / bike going over: you're flung off, tumble through the air, land flat on your
+## back, then pick yourself up. The machine's left lying there for R.
+func _throw_off() -> void:
+	var away := car.global_basis.y   # where the seat was pointing: away from the side it's falling onto
+	away.y = 0.0
+	if away.length() < 0.25:
+		away = -car.global_basis.z   # upside down: over the handlebars
+		away.y = 0.0
+	away = away.normalized() if away.length() > 0.01 else Vector3.FORWARD
+	var v := car.linear_velocity
+	v.y = maxf(v.y, 0.0)
+	_throw_vel = v * 0.38 + away * 2.6 + Vector3.UP * 3.4   # a few metres, not into orbit
+	_throw_land = -1.0
+	_exit_kind = 3
+	_set_state(State.EXITING)
+	_start_spin()
+	Sfx.play_at(self, "slide_up", global_position + Vector3.UP, -3.0)
+	if local_control:
+		_toast("Whoa - you came off! Press R next to it to stand it back up")
+
+
+func _run_thrown(delta: float) -> void:
+	_t += delta
+	var pose := "flail"
+	if _throw_land < 0.0:
+		_throw_vel.y -= 14.0 * delta
+		var drag := 1.0 - minf(1.2 * delta, 0.5)
+		_throw_vel.x *= drag
+		_throw_vel.z *= drag
+		var p := global_position + _throw_vel * delta
+		var g := island.height_at(p.x, p.z)
+		if (p.y <= g and _throw_vel.y < 0.0) or _t > 3.0:
+			p.y = g
+			# don't end up lying under (or inside) the machine
+			var off := p - car.global_position
+			off.y = 0.0
+			if off.length() < 1.7:
+				var dir := off.normalized() if off.length() > 0.05 else Vector3(_throw_vel.x, 0, _throw_vel.z).normalized()
+				p = car.global_position + dir * 1.7
+				p.y = island.height_at(p.x, p.z)
+			_throw_land = _t
+			Sfx.play_at(self, "thunk", p + Vector3.UP * 0.3, 0.0, 0.6)
+			if local_control:
+				var ach: Node = get_parent().get_parent().get("achievements") if get_parent() else null
+				if ach:
+					ach.unlock("rollover")
+		global_position = p
+		var flat_v := Vector3(_throw_vel.x, 0, _throw_vel.z)
+		if flat_v.length() > 0.5:
+			_yaw = atan2(-flat_v.x, -flat_v.z)
+	elif _t - _throw_land < 1.2:
+		pose = "flat"
+	elif _t - _throw_land < 1.65:
+		pose = "getup"
+	else:
+		pose = "idle"
+		velocity = Vector3.ZERO
+		_set_state(State.ON_FOOT)
+	global_basis = Basis(Vector3.UP, _yaw)
+	_net_pose = pose
+	_bonk_visuals(delta, pose)
+	avatar.animate(delta, pose, 0.0)
+
+
+## The buggy's open cage: on its side you squeeze up out between the bars of the side
+## that's facing the sky, sit on the side bar and drop down in front of the roof; on its
+## roof you belly-crawl out sideways between the pillars.
+func _run_buggy_exit(delta: float) -> void:
+	_t += delta
+	var xf := car.global_transform
+	var pose := "idle"
+	var spd := 0.0
+	var done := 3.0
+	if _exit_kind == 1:
+		var sx := 1.0 if car.global_basis.x.y >= 0.0 else -1.0
+		var gap := xf * Vector3(0.74 * sx, 0.74, 0.28)            # between the pillars, under the roof rail
+		var perch := xf * Vector3(1.02 * sx, 0.70, 0.10)          # sitting on the side bar
+		var land := xf * Vector3(0.2 * sx, 0.55, -2.55)           # down on the sand in front of the nose
+		land.y = island.height_at(land.x, land.z)
+		var face := land - perch
+		var out_yaw := atan2(-face.x, -face.z)
+		var seat := _car_point(_seat_pt())
+		if _t < 0.35:
+			global_position = seat
+			pose = "sit"
+		elif _t < 1.25:
+			global_position = seat.lerp(gap - Vector3.UP * 0.8, smoothstep(0.35, 1.25, _t))
+			pose = "climb_out"
+		elif _t < 1.85:
+			var k := smoothstep(1.25, 1.85, _t)
+			global_position = (gap - Vector3.UP * 0.8).lerp(perch - Vector3.UP * 0.45, k)
+			pose = "climb_out" if k < 0.55 else "sit"
+		elif _t < 2.15:
+			global_position = perch - Vector3.UP * 0.45
+			pose = "sit"
+		elif _t < 2.7:
+			var k := (_t - 2.15) / 0.55
+			global_position = (perch - Vector3.UP * 0.45).lerp(land, k) + Vector3.UP * sin(k * PI) * 0.5
+			pose = "jump"
+		else:
+			global_position = land
+			pose = "getup" if _t < 2.85 else "idle"
+		global_basis = Basis(Vector3.UP, out_yaw)
+		_yaw = out_yaw
+	else:
+		# upside down: the gap between the roof (on the sand) and the side bar is plenty
+		var side := 1.0   # the driver's side (right-hand drive)
+		var start := xf * Vector3(0.05 * side, 0.95, 0.30)
+		var out := xf * Vector3(2.35 * side, 0.95, 0.30)
+		start.y = island.height_at(start.x, start.z)
+		out.y = island.height_at(out.x, out.z)
+		var d := out - start
+		var out_yaw := atan2(-d.x, -d.z)
+		if _t < 0.4:
+			global_position = start
+			pose = "crawl"
+		elif _t < 2.1:
+			global_position = start.lerp(out, (_t - 0.4) / 1.7)
+			pose = "crawl"
+			spd = 1.0
+		else:
+			global_position = out
+			pose = "getup" if _t < 2.5 else "idle"
+		global_basis = Basis(Vector3.UP, out_yaw)
+		_yaw = out_yaw
+		done = 2.8
+	if _t >= done:
+		velocity = Vector3.ZERO
+		_set_state(State.ON_FOOT)
+	_net_pose = pose
+	avatar.animate(delta, pose, spd)
+
+
 ## Getting out of a rolled ute. On its side: up through the door window that's facing the
 ## sky, stand on the side of the ute, jump down. On its roof: belly-crawl out the side
 ## window, then get up.
@@ -688,8 +826,16 @@ func _run_rolled_exit(delta: float) -> void:
 
 
 func _run_exit(delta: float) -> void:
+	if _exit_kind == 3:
+		_run_thrown(delta)
+		return
 	if _exit_kind != 0:
-		_run_rolled_exit(delta)
+		if car.kind == "buggy":
+			_run_buggy_exit(delta)
+		elif car.throws_rider():
+			_throw_off()   # (only if you somehow ended up still sitting on a rolled quad / bike)
+		else:
+			_run_rolled_exit(delta)
 		return
 	_t += delta
 	var side_yaw := car_yaw() - PI * 0.5   # facing out of the driver's door

@@ -32,7 +32,7 @@ const DEFS := {
 	"yeeet": ["Yeeet!", "Got skittled by a ute. Player or bot, it still counts.", "!!", Color(1.00, 0.45, 0.25)],
 	"say_cheese": ["Say Cheese!", "Took a selfie on the island.", "[o]", Color(0.30, 0.75, 0.95)],
 	"thong": ["Thong Thief", "Chased down a dingo and got your thong back.", "Y", Color(0.20, 0.55, 0.95)],
-	"rollover": ["Shiny Side Up", "Rolled your ute. Maybe sidle a little slower next time.", "@", Color(0.85, 0.35, 0.65)],
+	"rollover": ["Shiny Side Up", "Put it on its lid. Maybe sidle a little slower next time.", "@", Color(0.85, 0.35, 0.65)],
 }
 
 signal unlocked_one(id: String)
