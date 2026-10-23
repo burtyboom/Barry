@@ -13,6 +13,7 @@ var island: IslandData
 var cars_root: Node
 
 var dash: Dash
+var _pve_chip: Label
 var _bogged: Label
 var _debug: Label
 var _map_tex: ImageTexture
@@ -53,6 +54,16 @@ func _ready() -> void:
 	dash.main = get_parent()
 	dash.position = Vector2(16, 16)
 	root.add_child(dash)
+	# PvE on: a little shield chip beside the dashboard
+	_pve_chip = Label.new()
+	_pve_chip.text = "  PvE  "
+	_pve_chip.tooltip_text = "PvE mode: no ute bonks or lassos with other players"
+	_pve_chip.add_theme_font_override("font", UiTheme.font(true))
+	_pve_chip.add_theme_font_size_override("font_size", 14)
+	_pve_chip.add_theme_stylebox_override("normal", UiTheme.panel(Color(0.20, 0.62, 0.35, 0.9), 12, 5))
+	_pve_chip.position = Vector2(16 + Dash.W + 8, 18)
+	_pve_chip.mouse_filter = Control.MOUSE_FILTER_PASS
+	root.add_child(_pve_chip)
 
 	_bogged = Label.new()
 	_bogged.text = "BOGGED!"
@@ -95,7 +106,9 @@ func _ready() -> void:
 	root.add_child(f1)
 	hp.visibility_changed.connect(func() -> void: f1.visible = not hp.visible)
 	# tuck the help away after a while (F1 brings it back)
-	get_tree().create_timer(25.0).timeout.connect(func() -> void: hp.visible = false)
+	get_tree().create_timer(25.0).timeout.connect(func() -> void:
+		if is_instance_valid(hp):
+			hp.visible = false)
 
 	_build_admin(root)
 	if "--ui-debug" in OS.get_cmdline_user_args():
@@ -186,6 +199,14 @@ func _update_winch_buttons() -> void:
 		var kn := float(r["tension"]) / 1000.0
 		_winch_info.text = "Winch hooked on: %.1f m of cable out   pull %.0f kN%s\n(get out and press E at the hook to unhook it)" % [
 			float(r["rest"]), kn, "  - STALLED, too much load!" if kn > Ropes.WINCH_MAX / 1000.0 else ""]
+
+
+## Hotbar slot background: like _style but with tight margins (13 slots have to fit).
+func _slot_style(c: Color) -> StyleBoxFlat:
+	var sb := _style(c)
+	sb.set_corner_radius_all(10)
+	sb.set_content_margin_all(5)
+	return sb
 
 
 func _style(c: Color) -> StyleBoxFlat:
@@ -309,7 +330,12 @@ func _build_maps(root: Control) -> void:
 
 	chat = ChatBox.new()
 	chat.name = "Chat"
+	chat.main = get_parent()
 	root.add_child(chat)
+	var cv: Convoy = get_parent().get("convoy")
+	if cv:
+		cv.changed.connect(chat.convoy_changed)
+		chat.convoy_changed()
 	chat.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT, Control.PRESET_MODE_MINSIZE, 16)
 	chat.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	if get_parent().has_method("send_chat"):
@@ -358,6 +384,8 @@ func _build_helper_panel(root: Control) -> void:
 	_admin_button(g, "Come to my rear", need.call(func(h: HelperBot) -> void: h.come("rear")))
 	_admin_button(g, "Come to my front", need.call(func(h: HelperBot) -> void: h.come("front")))
 	_admin_button(g, "Nudge me out!", need.call(func(h: HelperBot) -> void: h.nudge_me()))
+	_admin_button(g, "Strap me out!", need.call(func(h: HelperBot) -> void: h.strap_me_out()))
+	_admin_button(g, "Winch me out!", need.call(func(h: HelperBot) -> void: h.winch_me_out()))
 	_admin_button(g, "Send it (pull now)", need.call(func(h: HelperBot) -> void: h.send_it()))
 	_admin_button(g, "Bring helper to me", need.call(func(h: HelperBot) -> void: h.teleport_to_lead()))
 	var btn: Array[Button] = []
@@ -624,6 +652,12 @@ func _build_bot_tab(vb: Control) -> void:
 	_admin_button(g3, "Heal me (full health)", func() -> void:
 		if player and is_instance_valid(player):
 			player.revive())
+	var cd_btn: Array[Button] = []
+	cd_btn.append(_admin_button(g3, "Lasso cooldown: ON", func() -> void:
+		main.lasso_cooldown = not main.lasso_cooldown
+		if not main.lasso_cooldown and player and is_instance_valid(player):
+			player._lasso_cd = 0.0
+		cd_btn[0].text = "Lasso cooldown: %s" % ("ON" if main.lasso_cooldown else "OFF")))
 
 
 var _ach_panel: PanelContainer
@@ -732,18 +766,18 @@ func _build_hotbar(root: Control) -> void:
 	for i in Items.LIST.size():
 		var it: Dictionary = Items.LIST[i]
 		var p := PanelContainer.new()
-		p.custom_minimum_size = Vector2(76, 92)
+		p.custom_minimum_size = Vector2(66, 86)
 		p.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var vb := VBoxContainer.new()
 		vb.alignment = BoxContainer.ALIGNMENT_CENTER
 		p.add_child(vb)
 		var key := Label.new()
-		key.text = "-" if i == Items.REMOTE else str((i + 1) % 10)
+		key.text = {Items.REMOTE: "-", Items.LASSO: "L", Items.PHONE: "P"}.get(i, str((i + 1) % 10))
 		key.add_theme_font_size_override("font_size", 12)
 		key.modulate = Color(1, 1, 1, 0.6)
 		vb.add_child(key)
 		var icon := TextureRect.new()
-		icon.custom_minimum_size = Vector2(64, 48)
+		icon.custom_minimum_size = Vector2(56, 44)
 		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		icon.texture = _make_icon(it["id"])
@@ -838,7 +872,7 @@ func _update_hotbar() -> void:
 		_slots[Items.REMOTE].visible = winch_out
 		for i in _slots.size():
 			var sel := i == t.slot
-			_slots[i].add_theme_stylebox_override("panel", _style(Color(0.95, 0.75, 0.2, 0.9) if sel else Color(0, 0, 0, 0.55)))
+			_slots[i].add_theme_stylebox_override("panel", _slot_style(Color(0.95, 0.75, 0.2, 0.9) if sel else Color(0, 0, 0, 0.55)))
 			_slots[i].modulate = Color(1, 1, 1) if sel else Color(1, 1, 1, 0.85)
 
 
@@ -850,6 +884,7 @@ func _process(delta: float) -> void:
 		_bot_count.text = "Island bots (%d out and about)" % bots.ambient_count()
 	_toast_t -= delta
 	_toast.visible = _toast_t > 0.0
+	_pve_chip.visible = bool(get_parent().get("pve"))
 	var v: Voice = get_parent().get("voice")
 	_talk_chip.visible = v != null and v.talking_local
 	dash.car = car if car and is_instance_valid(car) else null

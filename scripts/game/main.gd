@@ -27,11 +27,17 @@ var avatar_style := "blocky"                ## body: blocky / bean (menu "Custom
 var avatar_hat := "cap"
 var avatar_shirt := "plain"
 var avatar_shoes := "sneakers"
+var pet_kind := "none"                     ## pet (menu "Customise"): none / cat / cavoodle / greyhound / collie
+var pet_col := 0                           ## which colour of that breed
+var pets: Node3D                           ## everyone's pets (Pet_<peer id>)
+var _peer_pets := {}                       ## other players' pet specs
+var _show_pet: Pet                         ## menu preview pet
 var shirt_color := Color(0.95, 0.45, 0.15)
 var car_color := Color(0.95, 0.45, 0.15)   ## your ute's paint (menu picker, saved)
 var admin_unlocked := false                 ## console "admin 1234" shows the admin menu
 var voice: Voice
 var console: DevConsole
+var convoy: Convoy
 var _show_person: Avatar                    ## you, standing by the menu ute (customise preview)
 var _custom_cam := false
 var _km := 0.0                              ## distance driven not yet counted towards stats
@@ -52,6 +58,9 @@ var player_names := {}               ## peer id -> name, for everyone in the gam
 var music: Music
 var fines_total := 0                 ## dollars of speeding fines this session
 var bonk_mode := 2                   ## admin: utes send people flying - 0 off, 1 players only, 2 players and bots
+var lasso_cooldown := true           ## admin: after wriggling free you can't be lassoed again for 30 s
+var pve := false                     ## PvE mode (menu tick box): no ute bonks or lassos with other players
+var peer_pve := {}                   ## other players' PvE setting, by peer id
 var bonks_given := 0                 ## people you've skittled this session
 var longest_flight := 0.0            ## metres, your best trip through the air
 var _flights := 0
@@ -92,6 +101,9 @@ func _ready() -> void:
 	players = Node3D.new()
 	players.name = "Players"
 	add_child(players)
+	pets = Node3D.new()
+	pets.name = "Pets"
+	add_child(pets)
 	props = Props.new()
 	props.name = "Props"
 	add_child(props)
@@ -105,6 +117,9 @@ func _ready() -> void:
 	voice = Voice.new()
 	voice.name = "Voice"
 	add_child(voice)
+	convoy = Convoy.new()
+	convoy.name = "Convoy"
+	add_child(convoy)
 	ropes.rope_snapped.connect(func(_id: String) -> void:
 		if hud:
 			hud.show_toast("SNAP! The strap broke - too much stretch"))
@@ -122,6 +137,16 @@ func _ready() -> void:
 	achievements = Achievements.new()
 	add_child(achievements)
 	achievements.unlocked_one.connect(func(id: String) -> void: Net.achievement(id))
+	# PvE: tell everyone who arrives (and everyone already here, once we're in)
+	Net.player_joined.connect(func(id: int) -> void:
+		if _online() and not Net.dedicated:
+			_announce_pve.rpc_id(id, pve))
+	Net.session_ready.connect(func(_id: int) -> void:
+		if _online() and not Net.dedicated:
+			_announce_pve.rpc(pve))
+	Net.island_received.connect(func(_w: String) -> void:
+		if _online():
+			_announce_pve.rpc(pve))
 	Net.progress_received.connect(func(ids: Array, _stats: Dictionary) -> void:
 		for id in ids:
 			achievements.mark(String(id)))
@@ -226,6 +251,8 @@ func _clear_world() -> void:
 		c.queue_free()
 	for c in players.get_children():
 		c.queue_free()
+	for c in pets.get_children():
+		c.queue_free()
 	props.clear_all()
 	ropes.clear_all()
 	bots.clear_all()
@@ -283,6 +310,7 @@ func _build_showcase() -> void:
 	_show_t = 0.0
 	camera.target = null
 	_show_person = null
+	_show_pet = null
 	_rebuild_preview()
 
 
@@ -295,6 +323,7 @@ func _clear_showcase() -> void:
 		_show_car.queue_free()
 	_show_car = null
 	_show_person = null
+	_show_pet = null
 
 
 ## Slow cinematic orbit round the parked ute, drifting in and out.
@@ -471,6 +500,11 @@ func set_look(kind: String, value) -> void:
 			car_color = value
 			if _show_car and is_instance_valid(_show_car):
 				_show_car.repaint(value)
+		"pet":
+			pet_kind = value
+			pet_col = 0
+		"pet_col":
+			pet_col = value
 	_rebuild_preview()
 	save_settings()
 
@@ -502,6 +536,47 @@ func _rebuild_preview() -> void:
 	_show_person = Avatar.create(avatar_spec(), shirt_color)
 	_showcase.add_child(_show_person)
 	_show_person.global_transform = xf
+	# your pet sits at your feet
+	if _show_pet and is_instance_valid(_show_pet):
+		_show_pet.queue_free()
+	_show_pet = Pet.create(pet_spec())
+	if _show_pet:
+		_show_pet.preview = true
+		_showcase.add_child(_show_pet)
+		var pp := xf * Vector3(-0.9, 0, -0.5)
+		pp.y = island.height_at(pp.x, pp.z)
+		_show_pet.global_transform = Transform3D(xf.basis.rotated(Vector3.UP, -0.6), pp)
+
+
+func pet_spec() -> String:
+	return Pet.spec_of(pet_kind, pet_col)
+
+
+## Your pet / someone else's: Pet_<id>, following that player's character.
+func _spawn_pet(id: int, person: PlayerCharacter, spec: String) -> void:
+	var old := pets.get_node_or_null("Pet_%d" % id)
+	if old:
+		old.name = "Pet_old_%d" % id
+		old.queue_free()
+	var pet := Pet.create(spec)
+	if pet == null:
+		return
+	pet.name = "Pet_%d" % id
+	pet.set_multiplayer_authority(id)
+	pet.player = person
+	pets.add_child(pet)
+	var p := person.global_position + Vector3(1.2, 0, 1.2)
+	pet.global_position = p
+	pet.state = "tray"   # starts in the back of the ute on the barge
+
+
+## B: whistle your pet back.
+func whistle() -> void:
+	var pet := pets.get_node_or_null("Pet_%d" % multiplayer.get_unique_id()) as Pet
+	if pet:
+		pet.whistle()
+	elif local_player:
+		Sfx.play_at(local_player, "whistle", local_player.global_position + Vector3.UP * 1.6, -2.0)
 
 
 ## Customise: frame you from the front, a little left of centre (the panel's on the right).
@@ -527,11 +602,14 @@ func _load_settings() -> void:
 	if cf.load(SETTINGS) == OK:
 		player_name = String(cf.get_value("player", "name", player_name))
 		car_color = cf.get_value("player", "car_color", car_color)
+		pve = bool(cf.get_value("player", "pve", false))
 		avatar_style = String(cf.get_value("look", "body", avatar_style))
 		avatar_hat = String(cf.get_value("look", "hat", avatar_hat))
 		avatar_shirt = String(cf.get_value("look", "shirt", avatar_shirt))
 		avatar_shoes = String(cf.get_value("look", "shoes", avatar_shoes))
 		shirt_color = cf.get_value("look", "shirt_color", shirt_color)
+		pet_kind = String(cf.get_value("look", "pet", pet_kind))
+		pet_col = int(cf.get_value("look", "pet_col", pet_col))
 		_settings_music = bool(cf.get_value("audio", "music", true))
 		var vol := float(cf.get_value("audio", "sfx_db", 0.0))
 		AudioServer.set_bus_volume_db(AudioServer.get_bus_index("SFX"), vol)
@@ -541,11 +619,14 @@ func save_settings() -> void:
 	var cf := ConfigFile.new()
 	cf.set_value("player", "name", player_name)
 	cf.set_value("player", "car_color", car_color)
+	cf.set_value("player", "pve", pve)
 	cf.set_value("look", "body", avatar_style)
 	cf.set_value("look", "hat", avatar_hat)
 	cf.set_value("look", "shirt", avatar_shirt)
 	cf.set_value("look", "shoes", avatar_shoes)
 	cf.set_value("look", "shirt_color", shirt_color)
+	cf.set_value("look", "pet", pet_kind)
+	cf.set_value("look", "pet_col", pet_col)
 	cf.set_value("audio", "music", music.enabled if music else true)
 	cf.set_value("audio", "sfx_db", AudioServer.get_bus_volume_db(AudioServer.get_bus_index("SFX")))
 	cf.save(SETTINGS)
@@ -665,6 +746,7 @@ func _spawn_car(id: int) -> void:
 	person.local_control = is_local
 	person.car = car
 	players.add_child(person)
+	_spawn_pet(id, person, pet_spec() if is_local else String(_peer_pets.get(id, "")))
 	if is_local:
 		local_player = person
 		hud.player = person
@@ -680,7 +762,7 @@ func _spawn_car(id: int) -> void:
 			achievements.unlock("deflators"))
 		person.tag_text = player_name
 		if _online():
-			_announce_style.rpc(avatar_spec(), player_name, car_color)
+			_announce_style.rpc(avatar_spec(), player_name, car_color, pet_spec())
 	if is_local:
 		local_car = car
 		camera.target = car
@@ -708,6 +790,8 @@ func _remove_car(id: int) -> void:
 		hud.show_toast("%s left" % name_of(id))
 	if players.has_node("Player_%d" % id):
 		players.get_node("Player_%d" % id).queue_free()
+	if pets.has_node("Pet_%d" % id):
+		pets.get_node("Pet_%d" % id).queue_free()
 	for rid in ropes.ropes_on(nm):
 		ropes._rpc_remove(rid)
 	bots.remove_owned_by(id)
@@ -725,13 +809,18 @@ func _on_peer_joined(id: int) -> void:
 		ropes.sync_to(id)
 	bots.sync_to(id)
 	if local_player:
-		_announce_style.rpc_id(id, avatar_spec(), player_name, car_color)
+		_announce_style.rpc_id(id, avatar_spec(), player_name, car_color, pet_spec())
 
 
 @rpc("any_peer", "call_remote", "reliable")
-func _announce_style(style: String, who := "", col := Color(0, 0, 0, 0)) -> void:
+func _announce_style(style: String, who := "", col := Color(0, 0, 0, 0), pet := "") -> void:
 	var id := multiplayer.get_remote_sender_id()
 	_peer_styles[id] = style
+	if String(_peer_pets.get(id, "")) != pet or (pet != "" and not pets.has_node("Pet_%d" % id)):
+		_peer_pets[id] = pet
+		var who_p := players.get_node_or_null("Player_%d" % id) as PlayerCharacter
+		if who_p:
+			_spawn_pet(id, who_p, pet)
 	if col.a > 0.0:
 		_peer_colors[id] = col
 		var c := cars.get_node_or_null("Car_%d" % id) as SandVehicle
@@ -778,6 +867,54 @@ func _rpc_award(id: String) -> void:
 
 
 ## Someone's landed after a ute sent them flying: tell everyone (the victim, the driver, anyone nearby).
+# ------------------------------------------------------------- PvE + lasso
+@rpc("any_peer", "call_remote", "reliable")
+func _announce_pve(on: bool) -> void:
+	peer_pve[multiplayer.get_remote_sender_id()] = on
+
+
+## Menu tick box: PvE on / off (saved, and everyone in the game is told).
+func set_pve(on: bool) -> void:
+	pve = on
+	save_settings()
+	if _online():
+		_announce_pve.rpc(on)
+
+
+## Is this person playing PvE? (Only real players can be; bots never are.)
+func is_pve(p: PlayerCharacter) -> bool:
+	if p == null or not String(p.name).begins_with("Player_"):
+		return false
+	if p == local_player:
+		return pve
+	return bool(peer_pve.get(p.get_multiplayer_authority(), false))
+
+
+## PvE rules for ute bonks and lassos: a PvE player can't be got by anyone, and can't get
+## other players (bots are fair game). actor_node = the driver's / thrower's person node name.
+func pve_blocks(victim: PlayerCharacter, actor_node: String) -> bool:
+	var victim_human := String(victim.name).begins_with("Player_")
+	if victim_human and is_pve(victim):
+		return true
+	var actor := players.get_node_or_null(actor_node) as PlayerCharacter
+	return victim_human and actor != null and actor != victim and is_pve(actor)
+
+
+## Someone's been lassoed: tell the thrower's screen and anyone close by.
+func report_lasso(by: String, victim: String, victim_node: String) -> void:
+	if _online():
+		_rpc_lasso_news.rpc(by, victim, victim_node)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _rpc_lasso_news(by: String, victim: String, victim_node: String) -> void:
+	if hud == null or local_player == null or not is_instance_valid(local_player) or String(local_player.name) == victim_node:
+		return
+	var v := players.get_node_or_null(victim_node) as Node3D
+	if v and v.global_position.distance_to(local_player.global_position) < 150.0 and by != player_name:
+		hud.show_toast("%s lassoed %s! Yeehaw!" % [by, victim])
+
+
 func report_bonk(victim: String, by: String, by_peer: int, by_node: String, dist: float, down: bool, victim_node: String) -> void:
 	if _online():
 		_rpc_bonk.rpc(victim, by, by_peer, by_node, dist, down, victim_node)
@@ -958,7 +1095,7 @@ func _rpc_chat(who: String, text: String) -> void:
 			who = real
 	if hud and hud.chat:
 		var mine := from == multiplayer.get_unique_id() or from == 0
-		hud.chat.add_line("players", who.left(16), text.left(160), UiTheme.ORANGE if mine else Color(0.55, 0.85, 1.0))
+		hud.chat.add_line("players", who.left(16), text.left(160), UiTheme.ORANGE if mine else Color(0.55, 0.85, 1.0), from)
 	if not Net.dedicated and not (from == multiplayer.get_unique_id() or from == 0):
 		Sfx.play_ui(self, "blip", -10.0, 1.3)
 	if Net.dedicated:
@@ -1007,6 +1144,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if event.is_action_pressed("music") and not (get_viewport().gui_get_focus_owner() is LineEdit):
 		toggle_music()
+		return
+	if event.is_action_pressed("whistle") and not Hud.typing() and local_player:
+		whistle()
 		return
 	if local_car == null or island == null:
 		return

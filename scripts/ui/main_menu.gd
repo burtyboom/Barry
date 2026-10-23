@@ -48,7 +48,7 @@ func _ready() -> void:
 	# ---- left: the big buttons
 	var left := PanelContainer.new()
 	left.theme = UiTheme.make_card()
-	left.position = Vector2(40, 262)
+	left.position = Vector2(40, 282)   # clear of the logo's ribbon
 	left.custom_minimum_size = Vector2(400, 0)
 	add_child(left)
 	var vb := VBoxContainer.new()
@@ -104,6 +104,15 @@ func _ready() -> void:
 		isl.add_child(b)
 		island_buttons.append(b)
 	island_buttons[0].button_pressed = true
+	var pve := CheckBox.new()
+	pve.text = "PvE mode (no ute bonks or lassos between players)"
+	pve.tooltip_text = "Nobody can skittle or lasso you, and you can't do it to other players - bots are still fair game"
+	pve.add_theme_font_size_override("font_size", 15)
+	pve.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	pve.custom_minimum_size = Vector2(360, 0)
+	pve.button_pressed = bool(main.pve)
+	pve.toggled.connect(func(on: bool) -> void: main.set_pve(on))
+	vb.add_child(pve)
 	status = Label.new()
 	status.add_theme_font_size_override("font_size", 15)
 	status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -448,6 +457,15 @@ func _build_custom() -> Control:
 	_choices(vb, "Shirt", Avatar.SHIRTS, main.avatar_shirt, func(k: String) -> void: main.set_look("shirt", k), 4)
 	_swatches(vb, main.CAR_PAINTS, main.shirt_color, func(c: Color) -> void: main.set_look("shirt_color", c))
 	_choices(vb, "Shoes", Avatar.SHOES, main.avatar_shoes, func(k: String) -> void: main.set_look("shoes", k), 3)
+	_choices(vb, "Pet", Pet.MENU, main.pet_kind, func(k: String) -> void:
+		main.set_look("pet", k)
+		_refresh_custom.call_deferred(), 3)
+	if Pet.KINDS.has(main.pet_kind):
+		var pcols := []
+		for c in Pet.KINDS[main.pet_kind]["cols"]:
+			pcols.append(c[1])
+		_swatches(vb, pcols, Pet.colour_of(main.pet_kind, main.pet_col), func(c: Color) -> void:
+			main.set_look("pet_col", pcols.find(c)))
 	var ul := Label.new()
 	ul.text = "Ute colour"
 	ul.add_theme_font_override("font", UiTheme.font(true))
@@ -458,15 +476,24 @@ func _build_custom() -> Control:
 	UiTheme.style_button(rnd, UiTheme.PURPLE, 18)
 	rnd.pressed.connect(func() -> void:
 		main.randomise_look()
-		# rebuild the panel so the buttons show the new picks
-		var old: Control = _panels["custom"]
-		var fresh := _build_custom()
-		old.get_parent().add_child(fresh)
-		fresh.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		_panels["custom"] = fresh
-		old.queue_free())
+		_refresh_custom())
 	vb.add_child(rnd)
 	return scroll
+
+
+## Rebuild the Customise panel so its buttons show the current picks (keeps the scroll spot).
+func _refresh_custom() -> void:
+	var old: Control = _panels["custom"]
+	var scroll_v := (old as ScrollContainer).scroll_vertical if old is ScrollContainer else 0
+	var fresh := _build_custom()
+	fresh.visible = old.visible
+	old.get_parent().add_child(fresh)
+	fresh.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_panels["custom"] = fresh
+	old.queue_free()
+	if fresh is ScrollContainer:
+		await get_tree().process_frame
+		(fresh as ScrollContainer).scroll_vertical = scroll_v
 
 
 func _choices(parent: Control, title: String, opts: Dictionary, cur: String, pick: Callable, cols: int) -> void:

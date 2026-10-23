@@ -58,6 +58,7 @@ static func setup() -> void:
 	_key("music", [KEY_N])
 	_key("talk", [KEY_V])
 	_key("wave", [KEY_Y])
+	_key("whistle", [KEY_B])   # call your pet back
 	_key("chat", [KEY_ENTER, KEY_KP_ENTER])   # push-to-talk (proximity voice)
 	var alt_enter := InputEventKey.new()
 	alt_enter.physical_keycode = KEY_ENTER

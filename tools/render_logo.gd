@@ -8,7 +8,7 @@ func _initialize() -> void:
 	var sc := float(args[1]) if args.size() > 1 else 2.0
 	var vp := SubViewport.new()
 	vp.transparent_bg = true
-	vp.size = Vector2i(int(660 * sc), int(330 * sc))
+	vp.size = Vector2i(int(660 * sc), int(375 * sc))
 	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	root.add_child(vp)
 	var holder := Control.new()

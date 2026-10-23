@@ -67,6 +67,13 @@ var _stars: Node3D
 var _hp_bar: Sprite3D
 var _startle_t := 0.0
 var wave_t := 0.0            ## waving at someone (Y)
+var tie_holder := ""         ## lassoed: whose rope we're on (their person node name) - synced to everyone
+var tie_car := ""            ## ...or the ute we're hitched behind
+var _tied_t := 0.0           ## seconds till we wriggle free (on our own machine)
+var _lasso_cd := 0.0         ## just wriggled free: can't be caught again for a bit (secret)
+var _tie_anchor_last := Vector3.INF
+var _tie_tumble := 0.0
+var _tie_rope: MeshInstance3D
 var _exit_kind := 0          ## how we're getting out: 0 door, 1 climb out the top, 2 crawl out from under
 static var _hp_tex := {}
 # network
@@ -264,9 +271,197 @@ func _process(delta: float) -> void:
 		for i in _stars.get_child_count():
 			var a := t2 * 3.2 + i * TAU / _stars.get_child_count()
 			_stars.get_child(i).position = Vector3(cos(a) * 0.38, sin(t2 * 5.0 + i) * 0.06, sin(a) * 0.38)
+	_draw_tie_rope()
 
 
-## Out cold: 5 ute bumps and you can't get up till the ambulance gets here.
+# ------------------------------------------------------------- lasso (victim's side)
+func is_tied() -> bool:
+	return tie_holder != "" or tie_car != ""
+
+
+## Thrower: "I've caught you" (secs > 0), or "hitch the rope to this ute" (secs < 0).
+## Goes to whichever machine runs this person; that machine decides.
+func request_lasso(holder: String, car_name: String, secs: float) -> void:
+	if local_control or ai or not _online():
+		lassoed(holder, car_name, secs)
+	else:
+		_rpc_lassoed.rpc_id(get_multiplayer_authority(), holder, car_name, secs)
+
+
+@rpc("any_peer", "call_remote", "reliable")
+func _rpc_lassoed(holder: String, car_name: String, secs: float) -> void:
+	if local_control or ai:
+		lassoed(holder, car_name, secs)
+
+
+func lassoed(holder: String, car_name: String, secs: float) -> void:
+	var main := get_tree().root.get_node_or_null("Main")
+	if main == null:
+		return
+	if secs < 0.0:
+		# hitched to a towbar
+		if is_tied() and tie_holder == holder:
+			_set_tie(holder, car_name)
+		return
+	if is_tied() or not is_on_foot() or _bonk != 0 or is_down():
+		return
+	if _lasso_cd > 0.0 and main.lasso_cooldown:
+		return   # still shaking it off from last time (nobody's told about this)
+	if main.pve_blocks(self, holder):
+		return
+	_tied_t = secs
+	_tie_anchor_last = Vector3.INF
+	_set_tie(holder, car_name)
+	velocity.y = 3.0
+	Sfx.play_at(self, "twang", global_position + Vector3.UP, -2.0, 1.3)
+	var who := _person_name(main, holder)
+	if local_control and main.hud:
+		main.hud.show_toast("%s lassoed you! Yeehaw! Hang tight, you'll wriggle free..." % who)
+	main.report_lasso(who, _person_name(main, String(name)), String(name))
+
+
+func _person_name(main: Node, node_name: String) -> String:
+	var p := main.players.get_node_or_null(node_name) as PlayerCharacter
+	if p == null:
+		return "Someone"
+	if p.tag_text != "":
+		return p.tag_text
+	return String(main.name_of(p.get_multiplayer_authority()))
+
+
+func _set_tie(holder: String, car_name: String) -> void:
+	if _online():
+		_rpc_tie.rpc(holder, car_name)
+	else:
+		_rpc_tie(holder, car_name)
+
+
+@rpc("any_peer", "call_local", "reliable")
+func _rpc_tie(holder: String, car_name: String) -> void:
+	tie_holder = holder
+	tie_car = car_name
+
+
+## Where our end of the rope is pulled to: the thrower's hand, or a ute's towbar.
+func _tie_anchor(main: Node) -> Vector3:
+	if tie_car != "":
+		var c := main.cars.get_node_or_null(tie_car) as SandVehicle
+		if c:
+			return c.global_transform * SandVehicle.REAR_POINT
+	var h := main.players.get_node_or_null(tie_holder) as PlayerCharacter
+	if h and tie_car == "":
+		if h.is_on_foot():
+			return h.avatar.hand_r.global_position
+		if h.car:
+			return h.car.global_transform * SandVehicle.REAR_POINT   # they jumped in their ute: still on the end of it
+	return Vector3.INF
+
+
+## Tied up on our own machine: no walking, just get dragged (and bounced) about on the rope.
+func _tied_walk(delta: float) -> void:
+	var main := get_tree().root.get_node_or_null("Main")
+	_tied_t -= delta
+	velocity.y -= GRAVITY * delta
+	var anchor := _tie_anchor(main) if main else Vector3.INF
+	var water := island.water_level_at(global_position.x, global_position.z) - global_position.y
+	if water > 0.6:
+		velocity.y = move_toward(velocity.y, (water - 0.6) * 3.0, 20.0 * delta)   # float, don't drown
+	if anchor != Vector3.INF:
+		var avel := Vector3.ZERO
+		if _tie_anchor_last != Vector3.INF and delta > 0.0:
+			avel = ((anchor - _tie_anchor_last) / delta).limit_length(40.0)
+		_tie_anchor_last = anchor
+		var rope := 6.0 if tie_car != "" else 3.2
+		var to := anchor - (global_position + Vector3.UP * 0.3)
+		var d := to.length()
+		if d > rope:
+			var n := to / d
+			velocity += n * (d - rope) * 30.0 * delta
+			var along := velocity.dot(n)
+			var a_along := avel.dot(n)
+			if along < a_along:
+				velocity += n * (a_along - along) * minf(1.0, 10.0 * delta)
+			if d > rope + 10.0:
+				global_position = anchor - n * (rope + 2.0)   # got way behind (lag / teleport): catch up
+		var spd := Vector2(avel.x, avel.z).length()
+		if is_on_floor():
+			velocity.x *= 1.0 - minf(1.0, 2.5 * delta)
+			velocity.z *= 1.0 - minf(1.0, 2.5 * delta)
+			# behind a moving ute: bounce and skitter about
+			if tie_car != "" and spd > 3.0 and randf() < 0.3:
+				velocity.y = randf_range(2.0, 4.5) * clampf(spd / 7.0, 0.5, 2.0)
+				velocity += Vector3(randf_range(-1.0, 1.0), 0, randf_range(-1.0, 1.0)) * spd * 0.2
+				if randf() < 0.3:
+					Sfx.play_at(self, "thunk", global_position, -10.0, randf_range(1.2, 1.6))
+		var flat := Vector3(to.x, 0, to.z)
+		if flat.length() > 0.3:
+			_yaw = lerp_angle(_yaw, atan2(-flat.x, -flat.z), minf(1.0, 6.0 * delta))   # head first, towards the rope
+	velocity = velocity.limit_length(35.0)
+	move_and_slide()
+	var ground := island.height_at(global_position.x, global_position.z)
+	if global_position.y < ground - 0.5:
+		global_position.y = ground + 0.1
+		velocity.y = maxf(velocity.y, 0.0)
+	global_basis = Basis(Vector3.UP, _yaw)
+	_bonk_visuals(delta, "tied")
+	_net_pose = "tied"
+	_net_speed = velocity.length()
+	avatar.animate(delta, "tied", 0.0)
+	if _tied_t <= 0.0:
+		_free_from_lasso(main)
+
+
+func _free_from_lasso(main: Node) -> void:
+	_set_tie("", "")
+	_lasso_cd = 30.0
+	velocity.y = 4.0
+	Sfx.play_at(self, "boing", global_position + Vector3.UP, -2.0)
+	if local_control and main and main.hud:
+		main.hud.show_toast("You wriggled free! Shake it off, mate.")
+
+
+## The rope, drawn on everyone's screen from the anchor to us.
+func _draw_tie_rope() -> void:
+	if not is_tied():
+		if _tie_rope:
+			(_tie_rope.mesh as ImmediateMesh).clear_surfaces()
+		return
+	var main := get_tree().root.get_node_or_null("Main")
+	var anchor := _tie_anchor(main) if main else Vector3.INF
+	if _tie_rope == null:
+		_tie_rope = MeshInstance3D.new()
+		_tie_rope.mesh = ImmediateMesh.new()
+		var m := StandardMaterial3D.new()
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.vertex_color_use_as_albedo = true
+		m.cull_mode = BaseMaterial3D.CULL_DISABLED
+		_tie_rope.material_override = m
+		_tie_rope.top_level = true
+		_tie_rope.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(_tie_rope)
+	var im := _tie_rope.mesh as ImmediateMesh
+	im.clear_surfaces()
+	if anchor == Vector3.INF:
+		return
+	var a := anchor
+	var b := global_position + Vector3.UP * 0.35
+	var cam := get_viewport().get_camera_3d()
+	var eye := cam.global_position if cam else a + Vector3.UP
+	var slack := maxf(0.0, (6.0 if tie_car != "" else 3.2) - a.distance_to(b)) * 0.3 + 0.1
+	im.surface_begin(Mesh.PRIMITIVE_TRIANGLE_STRIP)
+	for i in 13:
+		var k := i / 12.0
+		var p := a.lerp(b, k)
+		p.y -= slack * 4.0 * k * (1.0 - k)
+		p.y = maxf(p.y, island.height_at(p.x, p.z) + 0.04)
+		var side := (b - a).normalized().cross(eye - p).normalized() * 0.03
+		im.surface_set_color(Color(0.74, 0.56, 0.31))
+		im.surface_add_vertex(p - side)
+		im.surface_set_color(Color(0.74, 0.56, 0.31))
+		im.surface_add_vertex(p + side)
+	im.surface_end()
+
+
 ## Y: wave. On foot = a big two-second wave; in the ute = arm out the window and a toot.
 func wave() -> void:
 	if is_on_foot():
@@ -275,6 +470,7 @@ func wave() -> void:
 		car.wave(true)
 
 
+## Out cold: 5 ute bumps and you can't get up till the ambulance gets here.
 func is_down() -> bool:
 	return health <= 0
 
@@ -554,6 +750,8 @@ func _check_bumped() -> void:
 			away.y = 0.0
 			away = away.normalized()
 			var by := _driver_of(other, main)
+			if main.pve_blocks(self, String(by[2])):
+				continue   # PvE: no skittling (them or by them)
 			_bonk_by = by[0]
 			_bonk_by_peer = by[1]
 			_bonk_by_node = by[2]
@@ -667,7 +865,13 @@ func _bonk_visuals(delta: float, pose: String) -> void:
 		if _stars == null:
 			_stars = _make_stars()
 		_stars.visible = true
-	elif _vis_pose == "flail" or _vis_pose == "flat":
+	elif pose == "tied":
+		var spd := velocity.length() if (local_control or ai) else _net_speed
+		_tie_tumble += delta * spd * 1.3
+		var roll := sin(_tie_tumble) * clampf(spd / 7.0, 0.0, 1.0) * 1.1
+		var lie := Transform3D(Basis(Vector3.BACK, roll) * Basis(Vector3.RIGHT, PI * 0.5), Vector3(0, 0.25, 0))
+		avatar.transform = avatar.transform.interpolate_with(lie, minf(1.0, delta * 14.0))
+	elif _vis_pose == "flail" or _vis_pose == "flat" or _vis_pose == "tied":
 		avatar.transform = Transform3D.IDENTITY
 		if _stars:
 			_stars.visible = false
@@ -707,6 +911,10 @@ func _make_stars() -> Node3D:
 
 
 func _walk(delta: float) -> void:
+	_lasso_cd -= delta
+	if is_tied():
+		_tied_walk(delta)
+		return
 	_check_bumped()
 	_check_startled(delta)
 	var dir := Vector3.ZERO

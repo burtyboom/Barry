@@ -3,7 +3,7 @@ extends RefCounted
 ## The hotbar (keys 1-9, 0, - or mouse wheel while on foot). Pressing the key of the
 ## thing you're holding puts it away (slot -1 = empty hands).
 ## kind "prop" items are placed in the world; "tool" items are held and used.
-## The winch remote (last slot) only shows up while your winch is hooked on.
+## The winch remote (slot 10, key -) only shows up while your winch is hooked on; the lasso is key L.
 
 const LIST := [
 	{"id": "rod", "name": "Fishing rod", "short": "Rod", "kind": "tool", "color": Color(0.30, 0.60, 0.95)},
@@ -17,8 +17,12 @@ const LIST := [
 	{"id": "esky", "name": "Esky", "short": "Esky", "kind": "prop", "color": Color(0.20, 0.45, 0.85)},
 	{"id": "umbrella", "name": "Beach umbrella", "short": "Brolly", "kind": "prop", "color": Color(0.90, 0.25, 0.30)},
 	{"id": "remote", "name": "Winch remote", "short": "Winch", "kind": "tool", "color": Color(0.85, 0.15, 0.10)},
+	{"id": "lasso", "name": "Lasso", "short": "Lasso", "kind": "tool", "color": Color(0.80, 0.62, 0.35)},
+	{"id": "phone", "name": "Phone (selfies)", "short": "Selfie", "kind": "tool", "color": Color(0.30, 0.30, 0.38)},
 ]
 const REMOTE := 10              ## slot of the winch remote
+const LASSO := 11               ## slot of the lasso (key L)
+const PHONE := 12               ## slot of the selfie phone (key P)
 const EMPTY := {"id": "", "name": "Nothing", "short": "", "kind": "none", "color": Color.WHITE}
 
 
@@ -51,6 +55,21 @@ static func icon_model(id: String) -> Node3D:
 			Props._cyl(n, 0.06, 0.06, 0.04, Vector3(0, 0.30, -0.06), Color(0.3, 0.85, 0.3), Vector3(90, 0, 0))
 			Props._cyl(n, 0.06, 0.06, 0.04, Vector3(0, 0.13, -0.06), Color(0.9, 0.2, 0.15), Vector3(90, 0, 0))
 			Props._cyl(n, 0.012, 0.012, 0.6, Vector3(0, -0.25, 0), Color(0.08, 0.08, 0.09))
+		"lasso":
+			for k in 3:
+				var loop := MeshInstance3D.new()
+				var tm := TorusMesh.new()
+				tm.inner_radius = 0.26 - k * 0.03
+				tm.outer_radius = 0.30 - k * 0.03
+				loop.mesh = tm
+				loop.material_override = Toon.mat(Color(0.80, 0.62, 0.35).darkened(k * 0.06))
+				loop.position = Vector3(k * 0.03, 0.3 + k * 0.02, 0)
+				loop.rotation_degrees = Vector3(90, 0, 8.0 * k)
+				n.add_child(loop)
+		"phone":
+			Toon.box(n, Vector3(0.26, 0.48, 0.05), Vector3(0, 0.25, 0), Color(0.12, 0.12, 0.15))
+			Toon.box(n, Vector3(0.22, 0.40, 0.02), Vector3(0, 0.25, -0.03), Color(0.35, 0.75, 1.0), true, Vector3.ZERO, true)
+			Props._cyl(n, 0.03, 0.03, 0.02, Vector3(0.07, 0.42, 0.03), Color(0.05, 0.05, 0.05), Vector3(90, 0, 0))
 		"shovel":
 			var sh := Node3D.new()
 			sh.rotation_degrees = Vector3(0, 0, 40)

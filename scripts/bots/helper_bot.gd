@@ -10,6 +10,8 @@ extends BotBrain
 ##          SENDS IT, then rolls back for another go if you're still stuck. Winch to it
 ##          instead and it chocks its wheels and holds still as an anchor.
 ## STAY   - parks where it is.
+## "Strap me out" / "Winch me out" (Helper menu): it does the lot - parks, hops out,
+##          hooks up, pulls you out, then unhooks and packs the gear away again.
 
 enum Mode { FOLLOW, STAY, ASSIST }
 
@@ -43,6 +45,9 @@ var _creep_chk_span := INF
 var _recreep := 0             ## extra goes at creeping in when we stopped too far out for the strap
 var _creeping := false         ## last bit of the approach: inching in until the strap has ~3 m of slack
 var _creep_min := INF
+var _self_hook := ""          ## "strap" / "winch": the helper hops out and hooks up itself (Helper menu)
+var _hook_step := ""
+var _hook_t := 0.0
 
 
 func lead_car() -> SandVehicle:
@@ -79,10 +84,39 @@ func come(side: String) -> void:
 	_tries = 0
 	_nudged = false
 	_nudge_wait = 10.0
+	_self_hook = ""
+	_hook_step = ""
 	_set_phase("approach")
 	_path_t = 0.0
 	_creeping = false
 	_say("on my way to your %s" % ("tow hitch (rear)" if side == "rear" else "bullbar (front)"))
+
+
+## Helper menu "Strap me out" / "Winch me out": comes round behind you, gets out and
+## hooks everything up itself. The winch reaches 35 m, so it doesn't need to get close.
+func strap_me_out() -> void:
+	_begin_self_hook("strap")
+
+
+func winch_me_out() -> void:
+	_begin_self_hook("winch")
+
+
+func _begin_self_hook(kind: String) -> void:
+	var lead := lead_car()
+	if lead == null:
+		return
+	if not _rope_to_lead().is_empty():
+		_say("there's already a line on - send it or unhook it first")
+		return
+	var ready_behind := mode == Mode.ASSIST and assist_side == "rear" and phase in ["ready", "nudge_back"]
+	if not ready_behind:
+		come("rear")
+	_self_hook = kind
+	_hook_step = ""
+	if ready_behind:
+		_set_phase("ready")
+	_say("righto - I'll %s you out. Sit tight in the driver's seat!" % ("snatch" if kind == "strap" else "winch"))
 
 
 ## Helper button "Nudge me out!": drive round to your back bumper and push straight away.
@@ -138,7 +172,7 @@ func think(delta: float) -> void:
 		_say("%s, you're bogged! Coming to your %s - get the snatch strap out (2)" % [bots.name_of(multiplayer.get_unique_id()), assist_side])
 	_lead_was_bogged = lead.is_bogged
 	_update_anchor()
-	if _anchored:
+	if _anchored and _self_hook != "winch":
 		driver.status = "anchored - winch away"
 		return
 	match mode:
@@ -293,9 +327,14 @@ func _update_anchor() -> void:
 			driver.stop(0.1)
 			car.linear_velocity = Vector3.ZERO
 			car.angular_velocity = Vector3.ZERO
+			# (freezing can snap a body back to the last transform set in code - here, where
+			# it spawned - so pin it to where it actually is right now)
+			var here := car.global_transform
 			car.freeze_mode = RigidBody3D.FREEZE_MODE_KINEMATIC
 			car.freeze = true
-			_say("wheels chocked - winch away (G in, H out)")
+			car.global_transform = here
+			if _self_hook != "winch":
+				_say("wheels chocked - winch away (G in, H out)")
 		else:
 			car.freeze = false
 
@@ -314,10 +353,28 @@ func _assist(delta: float, lead: SandVehicle) -> void:
 			if not rope.is_empty():
 				_set_phase("ready")
 				return
+			if _self_hook == "winch" and _phase_t > 1.0 and _hook_span(lead) < 20.0 \
+					and (car.global_transform.affine_inverse() * lead.global_position).z < -3.0:
+				_creeping = false
+				driver.set_path(PackedVector3Array(), 0.0)
+				_set_phase("ready")
+				return
 			_approach(delta, lead)
 		"ready":
 			driver.stop(delta)
 			driver.status = "in position - hook the strap or winch on"
+			if _self_hook != "" and (rope.is_empty() or _hook_step == "back"):
+				_hook_up(delta, lead)
+				return
+			if _hook_step == "in" and not in_car():
+				return   # still climbing back in
+			if _hook_step == "in" and not rope.is_empty():
+				# back in the cab after hooking up ourselves: go!
+				_hook_step = ""
+				if rope["kind"] == "winch":
+					_set_phase("winching")
+					return
+				_send_now = true
 			if not rope.is_empty() and rope["kind"] == "strap" and lead.driver_present and (_tries < MAX_TRIES or _send_now):
 				_set_phase("countdown")
 			elif rope.is_empty() and not _nudged and assist_side == "rear" and lead.driver_present and _phase_t > _nudge_wait:
@@ -392,7 +449,10 @@ func _assist(delta: float, lead: SandVehicle) -> void:
 			if _phase_t > 1.5:
 				if moved > 6.0 and not lead.is_bogged:
 					_set_phase("done")
-					_say("you're out, %s! Unhook the strap (E at either end) and I'll follow" % bots.name_of(multiplayer.get_unique_id()))
+					if _self_hook != "":
+						_say("you're out, %s! Stay put, I'll grab the strap" % bots.name_of(multiplayer.get_unique_id()))
+					else:
+						_say("you're out, %s! Unhook the strap (E at either end) and I'll follow" % bots.name_of(multiplayer.get_unique_id()))
 				elif _tries < MAX_TRIES:
 					_set_phase("slack")
 					_say("still stuck - rolling back for another go")
@@ -412,10 +472,41 @@ func _assist(delta: float, lead: SandVehicle) -> void:
 			driver.status = "rolling back for slack (%.1f m)" % span
 			if span < Ropes.STRAP_LEN - 2.5 or _phase_t > 5.0 or a.distance_to(lead.global_position) < 4.0:
 				_set_phase("countdown")
+		"winching":
+			driver.stop(delta)
+			if rope.is_empty():
+				_set_phase("ready")
+				return
+			var r: Dictionary = _main.ropes.ropes[rope["id"]]
+			_main.ropes.auto_in[rope["id"]] = true
+			driver.status = "WINCHING you in (%.1f m of cable)" % float(r["rest"])
+			if _phase_t < delta * 1.5:
+				_say("winching - give it a little gas and steer straight, %s!" % bots.name_of(multiplayer.get_unique_id()))
+			var out := moved > 6.0 and not lead.is_bogged
+			if out or float(r["rest"]) < 2.5 or _phase_t > 70.0:
+				_main.ropes.auto_in.erase(rope["id"])
+				if out:
+					_set_phase("done")
+					_say("you're out! Hang on, I'll grab the winch hook")
+				else:
+					_say("the winch can't shift you - air down or dig, then ask me again")
+					_self_hook = ""
+					_set_phase("ready")
 		"done":
 			driver.stop(delta)
 			driver.status = "waiting for you to unhook"
+			if _self_hook != "" and not rope.is_empty():
+				_unhook(delta, lead, rope)
+				return
 			if rope.is_empty():
+				if not in_car():
+					# packed our gear away: back in the ute
+					if person.state == PlayerCharacter.State.ON_FOOT and (walk_to(person.door_spot(), false, 1.0) or _phase_t > 40.0):
+						person.ai_move = Vector3.ZERO
+						person.get_in()
+					return
+				_self_hook = ""
+				_hook_step = ""
 				mode = Mode.FOLLOW
 				phase = ""
 
@@ -447,9 +538,9 @@ func _approach(delta: float, lead: SandVehicle) -> void:
 			_creep_chk_span = span
 		if span < 4.0 and _phase_t < 30.0:
 			driver.pull(-toward, 0.3, delta)
-		elif span > 6.0 and span < _creep_min + 0.3 and _phase_t < 30.0:
+		elif span > 6.0 and (span < _creep_min + 0.3 or span > Ropes.STRAP_LEN - 1.0) and _phase_t < 45.0:
 			driver.pull(toward, _creep_pow, delta, driver.steer_toward(hook, toward < 0.0))
-		elif span > Ropes.STRAP_LEN - 1.0 and _recreep < 4:
+		elif span > Ropes.STRAP_LEN - 1.0 and _recreep < 6:
 			# stopped (timed out or slid) too far out for a 9 m strap: have another go
 			_recreep += 1
 			_creep_min = INF
@@ -516,6 +607,75 @@ func _approach(delta: float, lead: SandVehicle) -> void:
 			_creep_chk_span = INF
 
 
+## Out of the cab, our bullbar, your tow hitch, a second fiddling with the shackle,
+## then back in. If the strap won't reach from where we stopped, the winch it is.
+func _hook_up(delta: float, lead: SandVehicle) -> void:
+	_hook_t += delta
+	match _hook_step:
+		"":
+			if in_car():
+				if absf(car.speed_kmh) < 1.0:
+					person.get_out()
+				return
+			if person.state != PlayerCharacter.State.ON_FOOT:
+				return
+			_hook_step = "bar"
+			_hook_t = 0.0
+		"bar":
+			if walk_to(car.global_transform * SandVehicle.FRONT_POINT, false, 1.3) or _hook_t > 20.0:
+				_hook_step = "hitch"
+				_hook_t = 0.0
+		"hitch":
+			if walk_to(lead.global_transform * SandVehicle.REAR_POINT, false, 1.3) or _hook_t > 25.0:
+				person.ai_move = Vector3.ZERO
+				_hook_step = "tie"
+				_hook_t = 0.0
+		"tie":
+			person.pose_override = "dig"
+			if _hook_t < 1.2:
+				return
+			person.pose_override = ""
+			var span := _hook_span(lead)
+			if _self_hook == "strap" and span > Ropes.STRAP_LEN - 0.3:
+				_self_hook = "winch"
+				_say("strap won't reach from here (%.0f m) - I'll winch you instead" % span)
+			var mine := {"car": String(car.name), "p": SandVehicle.FRONT_POINT}
+			var yours := {"car": String(lead.name), "p": SandVehicle.REAR_POINT}
+			if _self_hook == "winch":
+				_main.ropes.create("winch", mine, yours, span + 0.3)
+			else:
+				_main.ropes.create("strap", mine, yours, Ropes.STRAP_LEN)
+			_say("%s's on - back in a sec" % ("strap" if _self_hook == "strap" else "winch hook"))
+			_hook_step = "back"
+			_hook_t = 0.0
+		"back":
+			if walk_to(person.door_spot(), false, 1.0) or _hook_t > 40.0:
+				person.ai_move = Vector3.ZERO
+				person.get_in()
+				_hook_step = "in"
+
+
+## After a pull we did ourselves: walk over, unhook, pack it away (the "done" phase
+## then walks us back to the cab).
+func _unhook(delta: float, lead: SandVehicle, rope: Dictionary) -> void:
+	_hook_t += delta
+	if in_car():
+		_hook_t = 0.0
+		if absf(car.speed_kmh) < 1.0 and not lead.is_bogged:
+			person.get_out()
+		return
+	if person.state != PlayerCharacter.State.ON_FOOT:
+		return
+	var hitch := lead.global_transform * SandVehicle.REAR_POINT
+	if not walk_to(hitch, false, 1.3) and _hook_t < 30.0:
+		return
+	person.ai_move = Vector3.ZERO
+	_main.ropes.remove(rope["id"])
+	_main.ropes.auto_in.erase(rope["id"])
+	_say("all packed up - see ya on the beach!")
+	_phase_t = 0.0
+
+
 ## Distance between the hooks we'd strap together: our bullbar to your tow hitch
 ## (helping from behind) or our tow hitch to your bullbar (from in front).
 func _hook_span(lead: SandVehicle) -> float:
@@ -528,5 +688,12 @@ func _parked() -> void:
 	_creeping = false
 	driver.set_path(PackedVector3Array(), 0.0)
 	_set_phase("ready")
+	var lead := lead_car()
+	var span := _hook_span(lead) if lead else 0.0
+	if span > Ropes.STRAP_LEN - 0.3 and _self_hook == "":
+		_say("can't get any closer - %.0f m between hooks, too far for the strap. Use the winch (reaches 35 m), or Helper > Winch me out" % span)
+		return
+	if _self_hook != "":
+		return   # we're hooking up ourselves - no instructions needed
 	_say("in position at your %s - hook the strap from my %s to your %s (or winch to me)" % [
 		assist_side, "bullbar" if assist_side == "rear" else "tow hitch", "tow hitch" if assist_side == "rear" else "bullbar"])

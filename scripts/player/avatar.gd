@@ -554,6 +554,13 @@ func animate(delta: float, pose: String, speed: float) -> void:
 			ta_r = -2.7
 			tz_r = -0.35 + sin(_phase) * 0.45
 			ta_l = sin(_phase * 0.5) * 0.05
+		"selfie":
+			# phone up at arm's length, out front and a bit to the right, cheesy grin
+			ta_r = 2.05
+			tz_r = -0.32
+			ta_l = 0.1
+			tz_l = 0.25
+			lean = -0.05
 		"radar":
 			# speed gun held out at arm's length, aimed up the beach
 			ta_r = 1.45
@@ -575,6 +582,13 @@ func animate(delta: float, pose: String, speed: float) -> void:
 			tz_r = -1.35
 			tl_l = 0.25 + maxf(sin(_phase * 1.7), 0.0) * 0.15
 			tl_r = -0.25
+		"tied":
+			# lassoed: arms pinned to your sides, legs kicking about
+			_phase += delta * 9.0
+			tz_l = 0.12
+			tz_r = -0.12
+			tl_l = sin(_phase) * 0.45
+			tl_r = -sin(_phase) * 0.45
 		"cpr":
 			# down on one knee, pumping away on the chest
 			_phase += delta * 11.0

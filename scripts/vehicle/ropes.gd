@@ -31,6 +31,7 @@ var remote_in := false          ## winch remote (on foot) buttons held
 var remote_out := false
 var cab_in := false             ## on-screen winch buttons in the cab
 var cab_out := false
+var auto_in := {}               ## rope ids a bot is winching in (the helper's "Winch me out")
 var cars_root: Node
 var _counter := 0
 var _len_timer := 0.0
@@ -234,6 +235,10 @@ func _physics_process(delta: float) -> void:
 		# winch control belongs to whoever owns the winch car
 		if r["kind"] == "winch":
 			var wcar := _car(r["a"])
+			if wcar and wcar.local_control and auto_in.has(id) and t < WINCH_MAX:
+				r["rest"] = maxf(rest - WINCH_IN * delta, 1.0)
+				if send_len and _online():
+					_rpc_length.rpc(id, r["rest"])
 			if wcar and wcar.local_control and not wcar.has_meta("bot"):
 				var changed := false
 				var w_in := Input.is_action_pressed("winch_in") or remote_in or cab_in

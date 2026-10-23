@@ -1371,6 +1371,104 @@ func helper_nudge() -> void:
 	car.throttle = 0.0
 
 
+## Bog chart: for each sand softness x tyre pressure, floor it from a standstill, then
+## drive, stop and pull away again (the classic way to bog). Prints a grid of B (bogged) / ok.
+func bograte() -> void:
+	var car: SandVehicle = main.local_car
+	var softs := [0.45, 0.6, 0.7, 0.8, 0.9, 1.0]
+	var psis := [32.0, 18.0, 15.0, 12.0]
+	var line := "soft   " 
+	for p in psis:
+		line += "  %2d psi      " % int(p)
+	print(line)
+	for sf in softs:
+		line = "%.2f   " % sf
+		for p in psis:
+			await place("Eurong", 0)
+			main.island.force_soft = sf
+			car.scripted = true
+			car.set_all_psi(p)
+			car.brake = 0.0
+			car.throttle = 0.0
+			await wait(1.0)
+			# 1) floor it from rest
+			car.throttle = 1.0
+			var bogged_a := false
+			for i in 60:
+				await wait(0.1)
+				bogged_a = bogged_a or car.is_bogged
+			var v := absi(roundi(car.speed_kmh))
+			# 2) stop, then pull away again
+			car.throttle = 0.0
+			car.brake = 1.0
+			await wait(2.5)
+			car.brake = 0.0
+			car.throttle = 1.0
+			var bogged_b := false
+			for i in 60:
+				await wait(0.1)
+				bogged_b = bogged_b or car.is_bogged
+			line += "  %s/%s %3dkmh  " % ["B" if bogged_a else "-", "B" if bogged_b else "-", v]
+			car.throttle = 0.0
+		print(line)
+	main.island.force_soft = -1.0
+
+
+## Helper > Strap me out / Winch me out: the helper parks, hops out, hooks up, pulls you out,
+## unhooks and drives off following you. HELPER_KIND=winch env picks the winch.
+func helper_self() -> void:
+	var kind := OS.get_environment("HELPER_KIND")
+	if kind == "":
+		kind = "strap"
+	await place("Eurong", 0)
+	var car: SandVehicle = main.local_car
+	car.scripted = true
+	car.set_all_psi(18.0)
+	main.bots.spawn("helper")
+	await wait(1.0)
+	var h: HelperBot = main.bots.helper
+	car.throttle = 0.5
+	await _helper_follow(h, car, 16.0)
+	car.throttle = 0.0
+	car.brake = 1.0
+	await wait(4.0)
+	await _bog(car)
+	car.brake = 0.0
+	if kind == "winch":
+		h.winch_me_out()
+	else:
+		h.strap_me_out()
+	var spot := car.global_position
+	var last := ""
+	var max_span := 0.0
+	for i in 400:
+		await wait(0.5)
+		if not h._rope_to_lead().is_empty() and not get_meta("traced", false):
+			set_meta("traced", true)
+			var rid: String = h._rope_to_lead()["id"]
+			for k in 12:
+				var r: Dictionary = main.ropes.ropes.get(rid, {})
+				print("  trace %.1fs rest %.2f tension %.0f  lead v %.1f  helper frozen=%s v %.1f  lead pos %s" % [k * 0.1, float(r.get("rest", 0)), float(r.get("tension", 0)),
+					car.linear_velocity.length(), h.car.freeze, h.car.linear_velocity.length(), car.global_position])
+				if r.size() > 0:
+					print("     pa %s pb %s  helper at %s facing %s  lead vel %s" % [main.ropes.anchor_pos(r["a"]), main.ropes.anchor_pos(r["b"]), h.car.global_position, -h.car.global_basis.z, car.linear_velocity])
+				await wait(0.1)
+		var pulling := h.phase in ["pulling", "winching"]
+		car.throttle = 0.4 if pulling else 0.0
+		var line := "%s/%s %s" % [h.phase, h._hook_step, "car" if h.in_car() else "foot"]
+		if OS.get_environment("HELPER_TRACE") != "":
+			print("   helper car %s frozen=%s  pending=%s %s" % [h.car.global_position, h.car.freeze, h.car._has_pending_place, h.car._pending_place.origin])
+		if line != last or i % 20 == 0:
+			var rope := h._rope_to_lead()
+			print("t=%.1f %s  span %.1f  you moved %.1f  bogged=%s rope=%s  %s" % [i * 0.5, line, h._hook_span(car),
+				car.global_position.distance_to(spot), car.is_bogged, rope.get("kind", "-"), h.driver.status])
+			last = line
+		if h.mode == HelperBot.Mode.FOLLOW and i > 4:
+			print("DONE: helper following again, ropes left %d, you moved %.1f m" % [main.ropes.ropes.size(), car.global_position.distance_to(spot)])
+			break
+	car.throttle = 0.0
+
+
 ## Rollover: flat-beach hard turns must NOT roll; the Rollover Hill sidle CAN roll you; climb out
 ## of a ute on its side, crawl out from under one on its roof, R flips it back (on foot, nearby).
 func rollover() -> void:
@@ -1487,3 +1585,255 @@ func rollover() -> void:
 	car.recover()
 	await wait(1.6)
 	print("bead after recovery: flat=%s psi %.0f" % [car.wheels[0].flat, car.wheels[0].psi])
+
+
+# ---------------------------------------------------------------- pets
+func _pet_line(p) -> String:
+	return "%s[%s a%d]" % [p.name, p.state, p.anim]
+
+
+## Your dog rides in the tray, hops out, follows / wanders, plays with another dog,
+## chases a cat (which bolts), comes when whistled, hops back in.
+func pets() -> void:
+	var me: int = main.multiplayer.get_unique_id()
+	main._spawn_pet(me, main.local_player, "collie:0")
+	var dog = main.pets.get_node("Pet_%d" % me)
+	await wait(1.0)
+	await place("Eurong", 0)
+	await wait(1.0)
+	print("start: ", _pet_line(dog), " in tray=", dog.global_position.distance_to((main.local_car.global_transform * dog.TRAY_XF).origin) < 0.3)
+	main.local_car.scripted = true
+	main.local_car.throttle = 0.6
+	await wait(3.0)
+	var tray_d: float = dog.global_position.distance_to((main.local_car.global_transform * dog.TRAY_XF).origin)
+	print("driving %d km/h: %s tray gap %.2f m" % [main.local_car.speed_kmh, _pet_line(dog), tray_d])
+	await shot("pet_tray")
+	main.local_car.throttle = 0.0
+	main.local_car.brake = 1.0
+	await wait(2.5)
+	main.local_car.brake = 0.0
+	main.local_player.get_out()
+	var seen := {}
+	for i in 12:
+		await wait(0.25)
+		seen[dog.state] = true
+	print("after get out: ", _pet_line(dog), " states seen ", seen.keys())
+	# walk away: does it follow?
+	var p: Vector3 = main.local_player.global_position + Vector3(-14, 0, 6)
+	main.teleport_local(p)
+	await wait(5.0)
+	print("followed: dog %.1f m from you  %s" % [dog.global_position.distance_to(main.local_player.global_position), _pet_line(dog)])
+	# mates: a second dog and a cat
+	main._spawn_pet(9001, main.local_player, "cavoodle:0")
+	main._spawn_pet(9002, main.local_player, "cat:0")
+	var dog2 = main.pets.get_node("Pet_9001")
+	var cat = main.pets.get_node("Pet_9002")
+	dog2.set_multiplayer_authority(me)   # pretend-mates' pets, run on this machine for the test
+	cat.set_multiplayer_authority(me)
+	dog2.state = "follow"
+	cat.state = "follow"
+	dog2.global_position = main.local_player.global_position + Vector3(5, 0, -3)
+	cat.global_position = main.local_player.global_position + Vector3(-12, 0, -8)
+	dog._cool["play"] = 0.0
+	seen = {}
+	var cat_seen := {}
+	var shot_play := false
+	for i in 120:
+		await wait(0.25)
+		for d in [dog, dog2]:
+			seen[d.state] = true
+			if d.state == "roll" and not shot_play:
+				shot_play = true
+				await shot("pet_play")
+		cat_seen[cat.state] = true
+		if i % 20 == 0:
+			print("  t=%4.1f %s %s %s" % [i * 0.25, _pet_line(dog), _pet_line(dog2), _pet_line(cat)])
+	print("dogs did: ", seen.keys(), "   cat did: ", cat_seen.keys())
+	# whistle
+	dog.global_position = main.local_player.global_position + Vector3(20, 0, 0)
+	dog.state = "wander"
+	dog._target = dog.global_position
+	main.whistle()
+	print("whistle -> ", _pet_line(dog))
+	for i in 20:
+		await wait(0.25)
+		if dog.state == "sit":
+			break
+	print("came back: %.1f m  %s" % [dog.global_position.distance_to(main.local_player.global_position), _pet_line(dog)])
+	# back in the ute
+	main.local_player.global_position = main.local_player.door_spot()
+	main.local_player.get_in()
+	for i in 16:
+		await wait(0.25)
+	print("got in: ", _pet_line(dog), " tray gap %.2f" % dog.global_position.distance_to((main.local_car.global_transform * dog.TRAY_XF).origin))
+
+
+# ---------------------------------------------------------------- lasso + PvE
+## A bot that's got out of its ute and is standing about (for lasso / bonk targets).
+func _bot_on_foot(near: Vector3) -> PlayerCharacter:
+	var b := await _one_bot("fisher")
+	b.car.teleport(_ground(near) + Vector3.UP * 0.9, Vector3.FORWARD)
+	await wait(2.0)
+	b.plan.clear()
+	b.plan.append({"do": "get_out"})
+	b.plan.append({"do": "wait", "t": 300.0})
+	await wait(4.0)
+	return b.person
+
+
+## Lasso a bot (count the throws), drag it, hitch it to the ute, tow it about, check it
+## wriggles free and the cooldown stops a straight re-catch.
+func lasso() -> void:
+	var windowed := DisplayServer.get_name() != "headless"
+	for d in [3.0, 8.0, 12.0, 15.0]:
+		print("odds at %4.1f m: perfect %.2f  ok(0.6) %.2f  landed 1 m off %.2f" % [d, Lasso.hit_chance(d, 1.0, 0.0, 0.0),
+			Lasso.hit_chance(d, 0.6, 0.0, 0.0), Lasso.hit_chance(d, 0.8, 1.0, 0.0)])
+	await place("Eurong", 0)
+	var pl: PlayerCharacter = main.local_player
+	pl.get_out()
+	await wait(2.5)
+	var bp := await _bot_on_foot(pl.global_position + Vector3(-6, 0, -25))
+	print("bot on foot=%s" % bp.is_on_foot())
+	pl.tools.select(Items.LASSO)
+	var la: Lasso = pl.tools.lasso
+	# stand 8 m from it
+	pl.global_position = _ground(bp.global_position + Vector3(8, 0, 0)) + Vector3.UP * 0.3
+	await wait(0.5)
+	if windowed:
+		main.hud.get_child(0).get_node("HelpPanel").visible = false
+		la.use(true)
+		la._target = bp
+		await wait(0.6)
+		look(pl.global_position + Vector3(3, 2.2, 4), pl.global_position + Vector3(0, 1.6, 0))
+		await shot("lasso_whirl")
+		la.use(false)
+		await wait(1.5)
+	var tries := 0
+	var caught_at := -1.0
+	for i in 30:
+		if bp.is_tied():
+			break
+		tries += 1
+		la.throw_at(bp, randf_range(0.6, 1.0))
+		await wait(1.2)
+	print("lasso: caught=%s after %d throws at 8 m  tied for %.1f s  holder=%s" % [bp.is_tied(), tries, bp._tied_t, bp.tie_holder])
+	if not bp.is_tied():
+		return
+	print("achievement yeehaw=%s" % main.achievements.is_unlocked("yeehaw"))
+	var t_free := bp._tied_t
+	bp._tied_t = 60.0   # hold them for the rest of the test
+	if windowed:
+		look(bp.global_position + Vector3(4, 2.5, 3), bp.global_position + Vector3(0, 0.3, 0))
+		await wait(0.5)
+		await shot("lasso_tied")
+	# drag them 10 m by walking away
+	var b0 := bp.global_position
+	for k in 60:
+		pl.global_position += Vector3(0.17, 0, 0)
+		await physics_frame
+		await physics_frame
+	await wait(0.5)
+	print("dragged: bot moved %.1f m, rope gap %.1f m" % [bp.global_position.distance_to(b0), bp.global_position.distance_to(pl.global_position)])
+	# hitch to the ute's towbar
+	var car: SandVehicle = main.local_car
+	pl.global_position = car.global_transform * (SandVehicle.REAR_POINT + Vector3(0.6, 0, 0.8))
+	await wait(0.3)
+	print("prompt near hitch: '%s'" % pl.tools.prompt)
+	la._hitch(car)
+	await wait(0.5)
+	print("hitched: tie_car=%s achievement hitched=%s" % [bp.tie_car, main.achievements.is_unlocked("hitched")])
+	car.scripted = true
+	car.handbrake = false
+	car.set_all_psi(18.0)
+	car.brake = 0.0
+	car.throttle = 0.7
+	var top := 0.0
+	var start := bp.global_position
+	for s in 15:
+		if s == 6:
+			car.steer = 0.4
+		var hi := 0.0
+		for f in 60:
+			await physics_frame
+			await physics_frame
+			hi = maxf(hi, bp.global_position.y - float(main.island.height_at(bp.global_position.x, bp.global_position.z)))
+		top = maxf(top, hi)
+		print("  tow t=%2d  car %3.0f km/h bogged=%s  bot gap to towbar %.1f m  highest bounce %.2f m" % [s + 1, car.speed_kmh, car.is_bogged,
+			bp.global_position.distance_to(car.global_transform * SandVehicle.REAR_POINT), hi])
+		if s == 4 and windowed:
+			look(car.global_position + Vector3(9, 4, 9), bp.global_position)
+			await shot("lasso_towed")
+	car.throttle = 0.0
+	car.brake = 1.0
+	print("towed %.0f m, highest bounce %.2f m" % [bp.global_position.distance_to(start), top])
+	# let them go: they wriggle free and get a cooldown
+	bp._tied_t = 0.05
+	await wait(1.0)
+	print("free=%s  cooldown %.1f s  (would have been tied %.1f s)" % [not bp.is_tied(), bp._lasso_cd, t_free])
+	pl.global_position = _ground(bp.global_position + Vector3(3, 0, 0)) + Vector3.UP * 0.3
+	await wait(0.3)
+	bp.request_lasso(String(pl.name), "", 15.0)
+	await wait(0.3)
+	print("re-lasso during cooldown blocked=%s" % not bp.is_tied())
+	main.lasso_cooldown = false
+	bp.request_lasso(String(pl.name), "", 15.0)
+	await wait(0.3)
+	print("with admin cooldown OFF: caught=%s" % bp.is_tied())
+
+
+## PvE: no bonks for you, none by you on other players; bots still fair game.
+func pve() -> void:
+	await place("Eurong", 0)
+	var pl: PlayerCharacter = main.local_player
+	main.pve = true
+	pl.get_out()
+	await wait(2.5)
+	var rammer := _second_car(main.local_car.global_position + Vector3(20, 0, 40))
+	rammer.driver_present = false
+	await wait(1.0)
+	await _ram(pl, rammer, 45.0)
+	await wait(1.0)
+	print("PvE me, rammed at 45: bonk=%d stun=%.1f health=%d" % [pl._bonk, pl._stun, pl.health])
+	# a pretend second human on foot
+	var other := PlayerCharacter.create("bean", Color(0.9, 0.3, 0.3))
+	other.name = "Player_77"
+	other.tag_text = "Mate"
+	other.local_control = false
+	other.ai = true
+	other.state = PlayerCharacter.State.ON_FOOT
+	main.players.add_child(other)
+	other.global_position = _ground(pl.global_position + Vector3(10, 0, -10)) + Vector3.UP * 0.5
+	await wait(1.0)
+	# me (PvE) driving into them
+	pl.global_position = pl.door_spot()
+	pl.get_in()
+	await wait(3.0)
+	print("me in ute: state=%d" % pl.state)
+	await _ram(other, main.local_car, 45.0)
+	await wait(1.0)
+	print("PvE me driving into a player: their bonk=%d stun=%.1f" % [other._bonk, other._stun])
+	main.pve = false
+	await wait(2.0)
+	await _ram(other, main.local_car, 45.0)
+	await wait(1.0)
+	print("PvE off, same ram: their bonk=%d (should be 1 or 2)" % other._bonk)
+	await wait(6.0)
+	# lassos: refused on a player while I'm PvE, fine on a bot
+	main.pve = true
+	pl.get_out()
+	await wait(2.5)
+	other._bonk = 0
+	other._stun = 0.0
+	pl.tools.select(Items.LASSO)
+	print("pve_blocks(player)=%s" % main.pve_blocks(other, String(pl.name)))
+	other.request_lasso(String(pl.name), "", 12.0)
+	await wait(0.3)
+	print("lasso a player while PvE: tied=%s (should be false)" % other.is_tied())
+	var bp := await _bot_on_foot(pl.global_position + Vector3(-6, 0, -25))
+	bp.request_lasso(String(pl.name), "", 12.0)
+	await wait(0.3)
+	print("lasso a bot while PvE: tied=%s (should be true)" % bp.is_tied())
+	bp._tied_t = 0.05
+	await wait(2.5)
+	await _ram(bp, rammer, 40.0)
+	print("bot after a ute ram while I'm PvE: bonk=%d (bots can still be skittled)" % bp._bonk)

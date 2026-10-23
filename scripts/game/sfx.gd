@@ -3,7 +3,8 @@ extends RefCounted
 ## Sound effects synthesised in code (no audio files): engine loop, splash, cast whoosh,
 ## door thunk, strap twang, winch whirr, air hiss, compressor buzz, placing pop,
 ## horns, sirens, surf, seagulls, kookaburras, the speeding-fine "wah wah", radio squelch,
-## cartoon bonk / slide whistle / boing for people sent flying, dingo howls and yips.
+## cartoon bonk / slide whistle / boing for people sent flying, dingo howls and yips,
+## the pet whistle, woofs and meows.
 
 const RATE := 22050
 static var _cache := {}
@@ -70,6 +71,12 @@ static func get_stream(kind: String) -> AudioStreamWAV:
 			s = _howl()
 		"yip":
 			s = _yip()
+		"whistle":
+			s = _whistle()
+		"woof":
+			s = _woof()
+		"meow":
+			s = _meow()
 		_:
 			s = _pop()
 	_cache[kind] = s
@@ -538,4 +545,64 @@ static func _yip() -> AudioStreamWAV:
 		var t := float(i) / RATE
 		ph += (1100.0 - 2600.0 * t) / RATE
 		out[i] = (sin(TAU * ph) + 0.3 * sin(TAU * ph * 2.0) + rng.randf_range(-1, 1) * 0.15) * minf(1.0, t * 200.0) * exp(-t * 18.0) * 0.5
+	return _wav(_pack(out))
+
+
+## A two-note "fweet-FWEEEET!" whistle to call your pet back.
+static func _whistle() -> AudioStreamWAV:
+	var dur := 0.95
+	var n := int(RATE * dur)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 11
+	var ph := 0.0
+	for i in n:
+		var t := float(i) / RATE
+		var f := 0.0
+		var env := 0.0
+		if t < 0.22:
+			f = 1700.0 + 500.0 * (t / 0.22)
+			env = minf(1.0, t * 80.0) * minf(1.0, (0.22 - t) * 60.0)
+		elif t > 0.3:
+			var k := (t - 0.3) / (dur - 0.3)
+			f = 1500.0 + 1300.0 * minf(k * 3.0, 1.0) - 250.0 * maxf(k - 0.6, 0.0)
+			env = minf(1.0, (t - 0.3) * 80.0) * minf(1.0, (dur - t) * 12.0)
+		ph += f * (1.0 + 0.012 * sin(TAU * 7.0 * t)) / RATE
+		out[i] = (sin(TAU * ph) * 0.85 + rng.randf_range(-1, 1) * 0.06) * env * 0.42
+	return _wav(_pack(out))
+
+
+## A cheerful "woof!".
+static func _woof() -> AudioStreamWAV:
+	var dur := 0.26
+	var n := int(RATE * dur)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 3
+	var ph := 0.0
+	for i in n:
+		var t := float(i) / RATE
+		var f := 260.0 + 160.0 * sin(PI * minf(t / dur, 1.0)) - 120.0 * t
+		ph += f / RATE
+		var v := sin(TAU * ph) + 0.6 * sin(TAU * ph * 2.0) + 0.3 * sin(TAU * ph * 3.0) + rng.randf_range(-1, 1) * 0.35
+		out[i] = v * minf(1.0, t * 120.0) * exp(-t * 9.0) * 0.38
+	return _wav(_pack(out))
+
+
+## A lazy "mrrow".
+static func _meow() -> AudioStreamWAV:
+	var dur := 0.55
+	var n := int(RATE * dur)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var ph := 0.0
+	for i in n:
+		var t := float(i) / RATE
+		var k := t / dur
+		var f := 560.0 + 300.0 * sin(PI * minf(k * 1.4, 1.0)) - 180.0 * k
+		ph += f / RATE
+		var env := minf(1.0, t * 25.0) * minf(1.0, (dur - t) * 8.0)
+		out[i] = (sin(TAU * ph) + 0.45 * sin(TAU * ph * 2.0) + 0.2 * sin(TAU * ph * 3.0)) * env * 0.3
 	return _wav(_pack(out))

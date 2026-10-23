@@ -29,10 +29,11 @@ var animate := true
 var _t := 0.0
 var _words: Array[Control] = []
 var _sun_angle := 0.0
+var _ribbon: Control
 
 
 func _ready() -> void:
-	custom_minimum_size = Vector2(640, 300)
+	custom_minimum_size = Vector2(640, 350)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var font: Font = load(FONT)
 	# [text, size, position, tilt deg, top colour, bottom colour, outline colour]
@@ -68,6 +69,57 @@ func _ready() -> void:
 		holder.add_child(front)
 		holder.pivot_offset = Vector2(size * 2.0, size * 0.6)
 		_words.append(holder)
+	_ribbon = _make_ribbon(font)
+
+
+## The "AI SLOP SPECIAL EDITION" banner slapped across the bottom corner: a red ribbon
+## with notched ends, a fat dark outline and a little fold under each end.
+func _make_ribbon(font: Font) -> Control:
+	var r := Control.new()
+	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	r.position = Vector2(165, 270)
+	r.size = Vector2(410, 56)
+	r.pivot_offset = r.size * 0.5
+	r.rotation_degrees = -7.0
+	add_child(r)
+	r.draw.connect(func() -> void:
+		var w := r.size.x
+		var h := r.size.y
+		var ink := Color(0.30, 0.04, 0.04)
+		# folded-back tails behind each end
+		for side in [-1.0, 1.0]:
+			var x0 := 0.0 if side < 0.0 else w
+			var tail := PackedVector2Array([Vector2(x0 - side * 6.0, 12), Vector2(x0 + side * 34.0, 12), Vector2(x0 + side * 22.0, h * 0.5 + 12),
+				Vector2(x0 + side * 34.0, h + 12), Vector2(x0 - side * 6.0, h + 12)])
+			r.draw_colored_polygon(_grow(tail, 4.0), ink)
+			r.draw_colored_polygon(tail, Color(0.62, 0.08, 0.08))
+		var band := PackedVector2Array([Vector2(0, 0), Vector2(w, 0), Vector2(w, h), Vector2(0, h)])
+		r.draw_colored_polygon(_grow(band, 4.0), ink)
+		r.draw_colored_polygon(band, Color(0.88, 0.14, 0.12))
+		r.draw_rect(Rect2(6, 5, w - 12, 5), Color(1, 1, 1, 0.22))   # shine
+		r.draw_dashed_line(Vector2(10, h - 7), Vector2(w - 10, h - 7), Color(1, 0.85, 0.6, 0.55), 2.0, 7.0))
+	var l := _label("AI SLOP SPECIAL EDITION", font, 30, Color(1.0, 0.95, 0.75), Color(0.30, 0.04, 0.04), 9)
+	l.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.35))
+	l.add_theme_constant_override("shadow_offset_y", 3)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.size = r.size
+	l.position = Vector2(0, -1)
+	r.add_child(l)
+	return r
+
+
+## A polygon pushed out from its middle (for the outline behind a shape).
+func _grow(pts: PackedVector2Array, by: float) -> PackedVector2Array:
+	var c := Vector2.ZERO
+	for p in pts:
+		c += p
+	c /= pts.size()
+	var out := PackedVector2Array()
+	for p in pts:
+		var d := p - c
+		out.append(p + Vector2(signf(d.x), signf(d.y)) * by)
+	return out
 
 
 func _label(text: String, font: Font, size: int, col: Color, outline: Color, outline_size: int) -> Label:
@@ -99,6 +151,9 @@ func _process(delta: float) -> void:
 				bob -= sin(k / 0.5 * PI) * 14.0
 		w.scale = Vector2(sq, 2.0 - sq)
 		w.position.y = [18.0, 78.0, 140.0][i] + bob
+	# the banner gives a cheeky little wiggle every so often
+	var k2 := fmod(_t + 2.0, 6.0)
+	_ribbon.rotation_degrees = -7.0 + (sin(k2 * 20.0) * 3.0 * (1.0 - k2 / 0.6) if k2 < 0.6 else 0.0)
 	queue_redraw()
 
 

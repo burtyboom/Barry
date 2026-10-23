@@ -1,5 +1,18 @@
 [
 	{
+		"version": "1.1.0",
+		"date": "2026-10-23",
+		"notes": [
+			"Bring a mate: dogs and cats ride along now (pick one in Customise). B whistles them back.",
+			"Aired-down tyres actually float now. Miss getting bogged? Air up.",
+			"Your helper will do the dirty work - have a look in the Helper menu",
+			"Convoys: click a name in chat and roll out together",
+			"There's a phone in your hotbar. Say cheese - the best ones end up on the website.",
+			"Something new is hanging off the end of the hotbar. Yeehaw.",
+			"Not in the mood for shenanigans? Tick PvE on the menu."
+		]
+	},
+	{
 		"version": "1.0.0",
 		"date": "2026-10-23",
 		"notes": [

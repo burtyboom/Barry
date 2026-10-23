@@ -11,6 +11,7 @@ func _initialize() -> void:
 	if role == "host":
 		main._select_island("moreton")
 		main.avatar_style = "bean"
+		main.pet_kind = "greyhound"
 		await main._start("host")
 		await create_timer(2.0).timeout
 		_eurongish(main.local_car, 0.0)
@@ -31,6 +32,7 @@ func _initialize() -> void:
 		await create_timer(6.0).timeout
 	else:
 		main.avatar_style = "blocky"
+		main.pet_kind = "cat"
 		await create_timer(2.0).timeout
 		get_root().get_node("Net").join("127.0.0.1")
 		for k in 6:
@@ -74,4 +76,7 @@ func _report() -> void:
 	for p in main.players.get_children():
 		var pc := p as PlayerCharacter
 		s += "  %s(style=%s state=%d local=%s fish=%s)" % [pc.name, pc.avatar.style, pc.state, pc.local_control, pc.tools._fish]
+	if main.get("pets"):
+		for pet in main.pets.get_children():
+			s += "  %s(%s state=%s anim=%d mine=%s)" % [pet.name, pet.kind, pet.state, pet.anim, pet.is_multiplayer_authority()]
 	print(s)

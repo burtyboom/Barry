@@ -25,6 +25,7 @@ const MAX_PLAYERS := 16
 var mode := "none"   # none / solo / host / client / dedicated
 var site_url := GameVersion.SITE_URL      ## website (accounts); -- --site=http://... overrides (testing)
 var server_host := GameVersion.SERVER_HOST   ## -- --server=host[:port] overrides
+var host_port := PORT                         ## -- --port=N: host on another port (tests)
 var island_id := "fraser"
 var dedicated := false            ## this process is the dedicated server
 var server_dedicated := false     ## (client) the server we joined has no player of its own
@@ -52,6 +53,8 @@ func _ready() -> void:
 			site_url = a.substr(7).trim_suffix("/")
 		elif a.begins_with("--server="):
 			server_host = a.substr(9)
+		elif a.begins_with("--port="):
+			host_port = int(a.substr(7))   # tests running side by side
 	multiplayer.peer_connected.connect(func(id: int) -> void:
 		if multiplayer.is_server():
 			_island_info.rpc_id(id, island_id)
@@ -96,9 +99,9 @@ func start_solo() -> void:
 
 func host() -> void:
 	var peer := ENetMultiplayerPeer.new()
-	var err := peer.create_server(PORT, MAX_PLAYERS)
+	var err := peer.create_server(host_port, MAX_PLAYERS)
 	if err != OK:
-		session_failed.emit("Could not host on port %d (error %d)" % [PORT, err])
+		session_failed.emit("Could not host on port %d (error %d)" % [host_port, err])
 		return
 	multiplayer.multiplayer_peer = peer
 	mode = "dedicated" if dedicated else "host"
@@ -293,7 +296,22 @@ func _heartbeat(secs: float) -> void:
 		var now := int(Time.get_unix_time_from_system())
 		_queue_stat(String(a["username"]), "play_seconds", clampi(now - int(a.get("counted", a["since"])), 0, int(round(secs)) + 1))
 		a["counted"] = now
-	_backend_post("/api/game/heartbeat", {"version": GameVersion.VERSION, "island": island_id, "players": list})
+	# how the server itself is coping (shown on the website's server stats page)
+	var bots := 0
+	var main := get_tree().root.get_node_or_null("Main")
+	if main and main.get("cars"):
+		for c in main.cars.get_children():
+			if c.has_meta("bot"):
+				bots += 1
+	var perf := {
+		"fps": Engine.get_frames_per_second(),
+		"physics_ms": Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0,
+		"static_mem_mb": OS.get_static_memory_usage() / 1048576.0,
+		"objects": Performance.get_monitor(Performance.OBJECT_COUNT),
+		"bots": bots,
+		"uptime_s": Time.get_ticks_msec() / 1000.0,
+	}
+	_backend_post("/api/game/heartbeat", {"version": GameVersion.VERSION, "island": island_id, "players": list, "perf": perf})
 
 
 func _flush_stats() -> void:

@@ -204,6 +204,10 @@ func _draw_markers(ctl: Control, to_screen: Callable, big: bool) -> void:
 			elif v == my_car and not me_on_foot:
 				continue   # drawn last, on top
 			else:
+				var cv: Convoy = main.get("convoy")
+				var n := String(v.name)
+				if cv and n.begins_with("Car_") and not n.begins_with("Car_spare") and cv.in_my_convoy(int(n.trim_prefix("Car_"))):
+					ctl.draw_arc(mp, 13.0 if big else 10.0, 0, TAU, 24, Color(0.45, 1.0, 0.5), 3.0)   # in your convoy
 				_arrow(ctl, mp, dir, 8.0 if big else 6.5, v.body_color)
 				var who := _owner_name(main, v)
 				if who != "":

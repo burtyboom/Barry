@@ -27,6 +27,9 @@ const DEFS := {
 	"frequent_flyer": ["Frequent Flyer", "Got sent flying ten times. Maybe stay off the beach?", "10", Color(0.30, 0.45, 0.95)],
 	"seeing_stars": ["Seeing Stars", "Got knocked out cold. Five bumps will do it.", "**", Color(1.00, 0.85, 0.20)],
 	"ambo": ["Saved by the Ambos", "Got brought round by a paramedic.", "+", Color(0.90, 0.20, 0.20)],
+	"yeehaw": ["Yeehaw!", "Caught someone with the lasso.", "U", Color(0.80, 0.55, 0.25)],
+	"hitched": ["Along for the Ride", "Found another use for the towbar.", "8", Color(0.55, 0.40, 0.25)],
+	"say_cheese": ["Say Cheese!", "Took a selfie on the island.", "[o]", Color(0.30, 0.75, 0.95)],
 	"thong": ["Thong Thief", "Chased down a dingo and got your thong back.", "Y", Color(0.20, 0.55, 0.95)],
 	"rollover": ["Shiny Side Up", "Rolled your ute. Maybe sidle a little slower next time.", "@", Color(0.85, 0.35, 0.65)],
 }

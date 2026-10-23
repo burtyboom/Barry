@@ -69,7 +69,7 @@ const RECOVER_COOLDOWN := 5.0
 @export var rr_sink_coeff := 1.6            ## rolling resistance per (sinkage^1.2)
 @export var grip_hard := 0.95
 @export var grip_soft := 0.52
-@export var low_psi_grip_bonus := 0.32
+@export var low_psi_grip_bonus := 0.60   ## aired down, the long flat footprint claws at soft sand
 
 @export var body_color := Color(0.85, 0.85, 0.80)
 
@@ -770,8 +770,10 @@ func ask_owner(method: String, args: Array) -> void:
 ## Barge API: ride frozen on the deck until released.
 func set_carried(by: Node) -> void:
 	carrier = by
+	var here := global_transform
 	freeze_mode = RigidBody3D.FREEZE_MODE_KINEMATIC
 	freeze = true
+	global_transform = here   # freezing can snap back to an old transform otherwise
 	linear_velocity = Vector3.ZERO
 	angular_velocity = Vector3.ZERO
 	speed_kmh = 0.0
@@ -814,8 +816,10 @@ func recover() -> bool:
 	_rec_from = global_transform
 	_rec_to = Transform3D(Basis.looking_at(fwd.normalized(), Vector3.UP), pos)
 	_recover_t = 0.0
+	var here := global_transform
 	freeze_mode = RigidBody3D.FREEZE_MODE_KINEMATIC
 	freeze = true
+	global_transform = here   # freezing can snap back to an old transform otherwise
 	linear_velocity = Vector3.ZERO
 	angular_velocity = Vector3.ZERO
 	Sfx.play_at(self, "whoosh", global_position, -6.0, 0.8)
@@ -1251,7 +1255,9 @@ func _simulate(delta: float) -> void:
 	for w in wheels:
 		if w.grounded and w.slip > 0.0 and w.surface != IslandData.Surface.ROCK:
 			# (being pushed: the shove keeps the tyres climbing instead of digging)
-			w.dig += dig_rate * minf(w.slip, 2.0) * pow(w.soft, 1.5) * delta * (0.25 if _pushed_t > 0.0 else 1.0)
+			# aired-down tyres float and paddle rather than trench: much slower to dig in
+			var psi_dig := clampf((w.psi - 10.0) / 22.0, 0.3, 1.0)
+			w.dig += dig_rate * minf(w.slip, 2.0) * pow(w.soft, 1.5) * psi_dig * delta * (0.25 if _pushed_t > 0.0 else 1.0)
 		# rolling cleanly lets the wheel climb out of its hole
 		if w.grounded and w.slip <= 0.0:
 			var recover_k := absf(w.v_long) * 0.45

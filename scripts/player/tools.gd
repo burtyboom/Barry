@@ -67,6 +67,7 @@ var _aim_ok := false
 var _aim_why := ""
 var _aim_ring: MeshInstance3D
 var _aim_mat: StandardMaterial3D
+var lasso: Lasso
 var _remote_in := false        ## winch remote buttons held
 var _remote_out := false
 
@@ -118,6 +119,11 @@ func _ready() -> void:
 	bot.rotation_degrees = Vector3(180, 0, 0)
 	bot.material_override = Toon.mat(Color(0.97, 0.97, 0.97))
 	_bobber.add_child(bot)
+	lasso = Lasso.new()
+	lasso.name = "Lasso"
+	lasso.tools = self
+	lasso.player = player
+	add_child(lasso)
 	select(-1)
 
 
@@ -136,7 +142,7 @@ func item() -> Dictionary:
 
 
 func slows_walking() -> bool:
-	return _fish == "charging" or _dig_t >= 0.0
+	return _fish == "charging" or _dig_t >= 0.0 or (lasso != null and lasso.state == "whirl")
 
 
 # ------------------------------------------------------------- selecting
@@ -144,6 +150,8 @@ func select(i: int) -> void:
 	slot = clampi(i, -1, Items.LIST.size() - 1)
 	if _fish != "idle":
 		_end_fishing()
+	if lasso and slot != Items.LASSO:
+		lasso.reset()
 	_strap_a = {}
 	_inflating = -1
 	_rotating = false
@@ -184,6 +192,18 @@ func _build_held(id: String) -> Node3D:
 			rod.add_child(_rod_tip)
 		"strap":
 			Props._cyl(n, 0.16, 0.16, 0.1, Vector3(0, -0.05, -0.08), Color(0.98, 0.80, 0.10), Vector3(90, 0, 0))
+		"lasso":
+			# a coil of rope in the fist
+			for k in 2:
+				var loop := MeshInstance3D.new()
+				var tm := TorusMesh.new()
+				tm.inner_radius = 0.13 - k * 0.02
+				tm.outer_radius = 0.16 - k * 0.02
+				loop.mesh = tm
+				loop.material_override = Toon.mat(Color(0.80, 0.62, 0.35).darkened(k * 0.08))
+				loop.position = Vector3(0, -0.12, -0.05 - k * 0.02)
+				loop.rotation_degrees = Vector3(90, 0, 0)
+				n.add_child(loop)
 		"inflator":
 			Toon.box(n, Vector3(0.08, 0.16, 0.08), Vector3(0, -0.04, -0.04), Color(0.2, 0.2, 0.22))
 			Toon.box(n, Vector3(0.06, 0.06, 0.22), Vector3(0, 0.03, -0.14), Color(0.85, 0.15, 0.12))
@@ -197,6 +217,10 @@ func _build_held(id: String) -> Node3D:
 			n.add_child(sh)
 			Props._cyl(sh, 0.025, 0.025, 1.1, Vector3(0, -0.2, 0), Color(0.6, 0.42, 0.25))
 			Toon.box(sh, Vector3(0.24, 0.3, 0.03), Vector3(0, -0.85, 0), Color(0.62, 0.64, 0.68))
+		"phone":
+			# phone held up, screen facing you
+			Toon.box(n, Vector3(0.09, 0.17, 0.02), Vector3(0, 0.02, -0.05), Color(0.12, 0.12, 0.15))
+			Toon.box(n, Vector3(0.075, 0.15, 0.01), Vector3(0, 0.02, -0.035), Color(0.35, 0.75, 1.0), true, Vector3.ZERO, true)
 		"remote":
 			Toon.box(n, Vector3(0.07, 0.14, 0.04), Vector3(0, 0.0, -0.04), Color(0.15, 0.15, 0.17))
 			Toon.box(n, Vector3(0.03, 0.03, 0.02), Vector3(0, 0.03, -0.065), Color(0.3, 0.85, 0.3))
@@ -432,6 +456,8 @@ func _attach_winch(anchor: Dictionary) -> void:
 func _update_item(delta: float) -> void:
 	var it := item()
 	match it["id"]:
+		"lasso":
+			lasso.update(delta)
 		"rod":
 			match _fish:
 				"idle":
@@ -674,7 +700,7 @@ func _update_remote() -> void:
 ## Camping gear: right mouse spins the ghost instead of turning the camera.
 ## Winch remote: hold Q to wind in, E to let out (right mouse stays on the camera).
 func _input(event: InputEvent) -> void:
-	if player == null or not player.local_control or player._bonk != 0:
+	if player == null or not player.local_control or player._bonk != 0 or player.is_tied():
 		return
 	if event is InputEventMouseMotion:
 		_mouse_aim = true
@@ -706,7 +732,7 @@ func _input(event: InputEvent) -> void:
 
 # ------------------------------------------------------------- input
 func _unhandled_input(event: InputEvent) -> void:
-	if player == null or not player.local_control or player._bonk != 0:
+	if player == null or not player.local_control or player._bonk != 0 or player.is_tied():
 		return
 	if player.state == PlayerCharacter.State.IN_CAR:
 		if event.is_action_pressed("interact") and player.car and absf(player.car.speed_kmh) < 6.0:
@@ -729,6 +755,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			want = 9
 		elif k == KEY_MINUS and _winch_id() != "":
 			want = Items.REMOTE
+		elif k == KEY_L:
+			want = Items.LASSO
+		elif k == KEY_P:
+			want = Items.PHONE
 		if want != -2:
 			toggle_slot(want)
 			get_viewport().set_input_as_handled()
@@ -814,6 +844,11 @@ func _use(pressed: bool) -> void:
 				else:
 					_fish = "idle"
 					charge = -1.0
+		"lasso":
+			lasso.use(pressed)
+		"phone":
+			if pressed:
+				_selfie().take()
 		"remote":
 			_remote_in = pressed
 			if pressed and _winch_id() != "":
@@ -1098,3 +1133,14 @@ func _toast(msg: String) -> void:
 ## The Net autoload, looked up at runtime (naming it directly breaks scripts that load this class early).
 func _net() -> Node:
 	return get_node("/root/Net")
+
+
+var _selfie_cam: SelfieCam
+
+
+func _selfie() -> SelfieCam:
+	if _selfie_cam == null:
+		_selfie_cam = SelfieCam.new()
+		_selfie_cam.player = player
+		add_child(_selfie_cam)
+	return _selfie_cam

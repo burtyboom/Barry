@@ -61,7 +61,7 @@ func _physics_process(delta: float) -> void:
 	if not is_instance_valid(car) or not is_instance_valid(person):
 		queue_free()
 		return
-	if person._bonk != 0 or person.is_down():
+	if person._bonk != 0 or person.is_down() or person.is_tied():
 		# sent flying by a ute or out cold: nothing happens till we're back on our feet
 		person.ai_move = Vector3.ZERO
 		if in_car():
