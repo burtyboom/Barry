@@ -16,6 +16,7 @@ func _initialize() -> void:
 	vp.add_child(holder)
 	var logo := Logo.new()
 	logo.animate = false
+	logo.draw_sun = not ("nosun" in args)
 	logo.position = Vector2(10, 10)
 	holder.add_child(logo)
 	for i in 8:

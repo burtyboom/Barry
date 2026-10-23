@@ -26,6 +26,7 @@ void fragment() {
 """
 
 var animate := true
+var draw_sun := true          ## false: the website draws its own animated sun behind the PNG
 var _t := 0.0
 var _words: Array[Control] = []
 var _sun_angle := 0.0
@@ -138,7 +139,7 @@ func _process(delta: float) -> void:
 	if not animate:
 		return
 	_t += delta
-	_sun_angle += delta * 0.15
+	_sun_angle += delta * 0.25
 	# BARRY! does a little bounce every few seconds; the other words bob gently
 	for i in _words.size():
 		var w := _words[i]
@@ -159,13 +160,22 @@ func _process(delta: float) -> void:
 
 func _draw() -> void:
 	# sunburst behind BARRY!
+	if not draw_sun:
+		return
+	# turning slowly, each ray stretching and shrinking on its own beat, the middle
+	# breathing in and out a little - a sun that's having a good time
 	var c := Vector2(470, 180)
 	var rays := 14
 	for i in rays:
 		var a0 := _sun_angle + TAU * i / rays
-		var a1 := a0 + TAU / rays * 0.5
-		var r := 148.0
-		draw_colored_polygon(PackedVector2Array([c, c + Vector2(cos(a0), sin(a0)) * r, c + Vector2(cos(a1), sin(a1)) * r]),
-			Color(1.0, 0.86, 0.45))
-	draw_circle(c, 84.0, Color(1.0, 0.62, 0.15))
-	draw_circle(c, 70.0, Color(1.0, 0.80, 0.30))
+		var a1 := a0 + TAU / rays * (0.5 + 0.08 * sin(_t * 1.3 + i * 2.1))
+		var r := 148.0 + 14.0 * sin(_t * 2.2 + i * 1.7)
+		var tip := (a0 + a1) * 0.5
+		draw_colored_polygon(PackedVector2Array([c, c + Vector2(cos(a0), sin(a0)) * r * 0.86,
+			c + Vector2(cos(tip), sin(tip)) * r, c + Vector2(cos(a1), sin(a1)) * r * 0.86]), Color(1.0, 0.86, 0.45))
+	var puff := 1.0 + 0.045 * sin(_t * 1.6)
+	var squish := Vector2(1.0 + 0.035 * sin(_t * 2.3), 1.0 - 0.035 * sin(_t * 2.3))
+	draw_set_transform(c, 0.0, squish * puff)
+	draw_circle(Vector2.ZERO, 84.0, Color(1.0, 0.62, 0.15))
+	draw_circle(Vector2.ZERO, 70.0, Color(1.0, 0.80, 0.30))
+	draw_set_transform(Vector2.ZERO)

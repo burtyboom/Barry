@@ -930,6 +930,7 @@ func _rpc_bonk(victim: String, by: String, by_peer: int, by_node: String, dist: 
 		Net.stat("flights")
 		longest_flight = maxf(longest_flight, dist)
 		achievements.unlock("bonked")
+		achievements.unlock("yeeet")
 		if dist >= 20.0:
 			achievements.unlock("air_time")
 		if _flights >= 10:
