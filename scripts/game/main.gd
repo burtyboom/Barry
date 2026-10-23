@@ -626,6 +626,8 @@ func _load_settings() -> void:
 
 
 func save_settings() -> void:
+	if _is_test_run():
+		return   # dev test scripts (-s res://tests/...) mustn't overwrite the player's real look / ride / pet
 	var cf := ConfigFile.new()
 	cf.set_value("player", "name", player_name)
 	cf.set_value("player", "car_color", car_color)
@@ -661,6 +663,14 @@ func _take_name() -> void:
 		var n := menu.name_edit.text.strip_edges()
 		player_name = n if n != "" else "Mate"
 	save_settings()
+
+
+func _is_test_run() -> bool:
+	var args := OS.get_cmdline_args()
+	var i := args.find("-s")
+	if i < 0:
+		i = args.find("--script")
+	return i >= 0 and i + 1 < args.size() and args[i + 1].contains("tests/")
 
 
 ## What to call a player (bots use this to say your name).
