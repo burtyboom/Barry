@@ -88,5 +88,50 @@ func _initialize() -> void:
 	await create_timer(0.8).timeout
 	await RenderingServer.frame_post_draw
 	root.get_texture().get_image().save_png(out + "cat_walk.png")
+	# heads side-on and 3/4 (collie ears, greyhound neck)
+	for pet in pets:
+		pet.force_anim = 0
+		pet.force_speed = 0.0
+	cam.fov = 30.0
+	cam.position = Vector3(-0.05, 0.62, 2.0)
+	cam.look_at(Vector3(-0.05, 0.42, 0))
+	await create_timer(0.8).timeout
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png(out + "heads_side.png")
+	cam.position = Vector3(-1.4, 0.75, 1.3)
+	cam.look_at(Vector3(0.0, 0.4, 0))
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png(out + "heads_34.png")
+	# greyhound + collie sitting side-on
+	for pet in pets:
+		pet.force_anim = 3
+	cam.position = Vector3(0.0, 0.5, 2.6)
+	cam.look_at(Vector3(0.0, 0.35, 0))
+	await create_timer(0.9).timeout
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png(out + "sit_side.png")
+	# lying, from a bit above
+	var lie: int = pets[0].get_script().get_script_constant_map()["Anim"]["LIE"]
+	for pet in pets:
+		pet.force_anim = lie
+	cam.position = Vector3(-0.8, 1.2, 2.2)
+	cam.look_at(Vector3(-0.3, 0.1, 0))
+	await create_timer(0.9).timeout
+	await RenderingServer.frame_post_draw
+	root.get_texture().get_image().save_png(out + "lie_close.png")
+	# mid barrel roll (the preview roll runs on the clock: wait for the halfway point)
+	for pet in pets:
+		pet.force_anim = 4
+	cam.fov = 40.0
+	cam.position = Vector3(0, 0.75, 4.0)
+	cam.look_at(Vector3(0, 0.3, 0))
+	for n in 2:
+		while true:
+			await process_frame
+			var tt := fmod(Time.get_ticks_msec() / 1000.0, 1.6)
+			if tt > (0.30 if n == 0 else 0.48) and tt < (0.36 if n == 0 else 0.54):
+				break
+		await RenderingServer.frame_post_draw
+		root.get_texture().get_image().save_png(out + "roll_mid%d.png" % n)
 	print("pet shots done")
 	quit()

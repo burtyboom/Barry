@@ -29,13 +29,12 @@ func build(d: IslandData) -> void:
 		var dog := Dingo.new()
 		dog.home = h
 		add_child(dog)
-	# roos and birds around wherever you are (nobody to see them on the online server)
-	var net := get_node_or_null("/root/Net")
-	if net == null or not net.dedicated:
-		var wild := Wildlife.new()
-		wild.name = "Wildlife"
-		wild.island = data
-		add_child(wild)
+	# roos and birds around wherever people are (the online server runs them without
+	# meshes and tells everyone where they are; it lives at World/Wildlife everywhere)
+	var wild := Wildlife.new()
+	wild.name = "Wildlife"
+	wild.island = data
+	add_child(wild)
 	if data.plane_f >= 0.0:
 		var plane := Ambient.BeachPlane.new()
 		plane.island = data

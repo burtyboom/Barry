@@ -3,17 +3,27 @@ extends Node3D
 ## A cartoon eastern grey. Grazes hunched over on its forearms, now and then shuffles a
 ## few metres, sits up tall with its ears swivelling when something comes near, and
 ## bounds off - big two-footed hops with the tail swinging for balance - when a ute or
-## a person gets too close. Ambient only (each machine runs its own); no collision, so
-## nobody gets stuck on one. Wildlife places them in small mobs around the camera.
+## a person gets too close. No collision, so nobody gets stuck on one.
+## Shared in multiplayer: the host / online server runs the brains (logic = true) and
+## Wildlife sends everyone where each roo is; other machines just follow along
+## (logic = false) and animate. The online server has no meshes at all (show = false).
 
 const FAR := 240.0           ## past this from the camera: hidden, no thinking
 const SCARE_PERSON := 13.0
 const SCARE_CAR := 30.0
 const HOP_LEN := 0.58        ## seconds per bound
+const STATES := ["graze", "shuffle", "alert", "flee"]
 
 var island: IslandData
 var mob_center := Vector3.ZERO   ## where the mob hangs out (Wildlife moves it)
+var logic := true            ## this machine decides what it does (host / server / solo)
+var show := true             ## build the model and animate (false on the online server)
+var wild: Node               ## the Wildlife manager (threat list)
 var _main: Node
+var _net_pos := Vector3.INF  ## follower: where the host says it is
+var _net_yaw := 0.0
+var _net_speed := 0.0
+var _net_at := 0
 var _state := "graze"        ## graze / shuffle / alert / flee
 var _t := 0.0
 var _wait := 3.0
@@ -43,9 +53,11 @@ func _ready() -> void:
 		island = IslandData.instance
 	_main = get_tree().root.get_node_or_null("Main")
 	add_to_group("roos")
-	_size = randf_range(0.85, 1.12)
-	_build()
-	Birds.bake_tree(self, true)
+	if logic:
+		_size = randf_range(0.85, 1.12)
+	if show:
+		_build()
+		Birds.bake_tree(self, true)
 	_yaw = randf() * TAU
 	global_basis = Basis(Vector3.UP, _yaw) * Basis.from_scale(Vector3.ONE * _size)
 	_wait = randf_range(2.0, 7.0)
@@ -162,10 +174,30 @@ func _dry(p: Vector3) -> bool:
 ## Something scary nearby: which way to run, or ZERO. Also notes what to stare at.
 func _threat() -> Vector3:
 	_look_at = Vector3.INF
-	if _main == null:
-		return Vector3.ZERO
 	var me := global_position
 	var worst := Vector3.ZERO
+	if wild:
+		# everyone's utes and people, with speeds worked out by Wildlife (remote utes on
+		# the server don't have a physics velocity of their own)
+		for t in wild.threats:
+			var rel: Vector3 = me - (t["pos"] as Vector3)
+			rel.y = 0.0
+			var d := rel.length()
+			if t["car"]:
+				if d > SCARE_CAR + 20.0:
+					continue
+				if d < 50.0:
+					_look_at = t["pos"]
+				if (d < SCARE_CAR and t["speed"] > 2.0) or d < 8.0 or (t["horn"] and d < 40.0):
+					worst = rel.normalized() if d > 0.1 else Vector3.FORWARD
+			else:
+				if d < 26.0 and _look_at == Vector3.INF:
+					_look_at = t["pos"]
+				if d < SCARE_PERSON and worst == Vector3.ZERO:
+					worst = rel.normalized() if d > 0.1 else Vector3.FORWARD
+		return worst
+	if _main == null:
+		return Vector3.ZERO
 	if _main.get("cars"):
 		for c in _main.cars.get_children():
 			var car := c as SandVehicle
@@ -207,11 +239,76 @@ func scare(from: Vector3) -> void:
 func _process(delta: float) -> void:
 	if island == null:
 		return
-	var cam := get_viewport().get_camera_3d()
-	var far := cam != null and cam.global_position.distance_to(global_position) > FAR
-	visible = not far
-	if far:
+	var far := true
+	if show:
+		var cam := get_viewport().get_camera_3d()
+		far = cam != null and cam.global_position.distance_to(global_position) > FAR
+		visible = not far
+	if not logic:
+		_follow(delta, far)
 		return
+	if far and wild == null:
+		return   # ambient only (no manager): nothing to do out of sight
+	_think(delta, far)
+
+
+## Follower: glide to where the host says it is, hopping when it's moving.
+func _follow(delta: float, far: bool) -> void:
+	if _net_pos == Vector3.INF:
+		return
+	_t += delta
+	var age := minf((Time.get_ticks_msec() - _net_at) / 1000.0, 0.6)
+	var want := _net_pos
+	if _net_speed > 0.3:
+		want += Vector3(-sin(_net_yaw), 0, -cos(_net_yaw)) * _net_speed * age
+	var pos := global_position
+	if Vector2(want.x - pos.x, want.z - pos.z).length() > 12.0:
+		pos = want   # way off (just placed / relocated): jump there
+	else:
+		pos = pos.lerp(want, minf(1.0, delta * 6.0))
+	pos.y = island.height_at(pos.x, pos.z)
+	global_position = pos
+	_yaw = lerp_angle(_yaw, _net_yaw, minf(1.0, delta * 8.0))
+	global_basis = Basis(Vector3.UP, _yaw) * Basis.from_scale(Vector3.ONE * _size)
+	_speed = move_toward(_speed, _net_speed, delta * 12.0)
+	if _speed > 0.3 or _hopping:
+		if not _hopping:
+			_hopping = true
+			_hop = 0.0
+		_hop += delta / (HOP_LEN * (1.25 if _speed < 4.0 else 1.0))
+		if _hop >= 1.0:
+			if _speed > 0.3:
+				_hop -= 1.0
+			else:
+				_hop = 0.0
+				_hopping = false
+	if not far:
+		_animate(delta)
+
+
+## Follower: the host's latest word on this roo.
+func net_update(pos: Vector3, yaw: float, state: int, speed: float, size: float) -> void:
+	var first := _net_pos == Vector3.INF
+	_net_pos = pos
+	_net_yaw = yaw
+	_net_speed = speed
+	_net_at = Time.get_ticks_msec()
+	var st: String = STATES[clampi(state, 0, STATES.size() - 1)]
+	if st != _state:
+		_set_state(st)
+	if absf(size - _size) > 0.001:
+		_size = size
+	if first:
+		_yaw = yaw
+		global_position = Vector3(pos.x, island.height_at(pos.x, pos.z), pos.z)
+		global_basis = Basis(Vector3.UP, _yaw) * Basis.from_scale(Vector3.ONE * _size)
+
+
+func state_code() -> int:
+	return maxi(STATES.find(_state), 0)
+
+
+func _think(delta: float, far: bool) -> void:
 	_t += delta
 	var pos := global_position
 	var threat := _threat()
@@ -273,7 +370,8 @@ func _process(delta: float) -> void:
 			pos += -global_basis.z * maxf(_speed, 1.5) * delta
 	pos.y = island.height_at(pos.x, pos.z)
 	global_position = pos
-	_animate(delta)
+	if show and not far:
+		_animate(delta)
 
 
 func _set_state(s: String) -> void:

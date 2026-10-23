@@ -2,8 +2,10 @@ class_name Birds
 extends RefCounted
 ## Birds: a flock of seagulls loafing on the beach (they all lift off and wheel around
 ## when a ute or a person barges through, then settle again a bit further along), and
-## big birds of prey soaring in lazy circles high overhead. Ambient only - each machine
-## runs its own; no collision.
+## big birds of prey soaring in lazy circles high overhead. No collision. The gull flocks
+## are shared in multiplayer (the host / online server decides when they lift off and
+## where they land, everyone else follows); the birds of prey are just for show, each
+## machine has its own.
 
 const GULL_GREY := Color(0.70, 0.74, 0.80)
 const WHITE := Color(0.97, 0.97, 0.96)
@@ -200,15 +202,20 @@ class GullFlock extends Node3D:
 	var _air_for := 10.0
 	var _center := Vector3.ZERO  ## circling centre while up
 	var _landing := false
+	var _land_t := 0.0           ## no gulls to watch (online server): how long the landing's been going
 	var _call_t := 0.0
+	var logic := true            ## this machine decides (host / server / solo)
+	var show := true             ## has gulls to draw (false on the online server)
+	var wild: Node               ## the Wildlife manager (threat list)
 
 	func _ready() -> void:
 		_main = get_tree().root.get_node_or_null("Main")
-		for i in count:
-			var g := Gull.new()
-			add_child(g)
-			g.set_flying(false)
-			gulls.append(g)
+		if show:
+			for i in count:
+				var g := Gull.new()
+				add_child(g)
+				g.set_flying(false)
+				gulls.append(g)
 		visible = false
 
 	## Sit the whole flock down at p (no flying; used when it's out of sight).
@@ -217,16 +224,23 @@ class GullFlock extends Node3D:
 		placed = true
 		_air = false
 		_landing = false
+		var rng := _rng_for(p)
 		for g in gulls:
-			g.spot = _scatter_spot(p)
+			g.spot = _scatter_spot(p, rng)
 			g.global_position = g.spot
 			g.vel = Vector3.ZERO
 			g.set_flying(false)
 		visible = true
 
-	func _scatter_spot(p: Vector3) -> Vector3:
+	## Seeded from the spot, so every machine puts each gull in the same place.
+	func _rng_for(p: Vector3) -> RandomNumberGenerator:
+		var rng := RandomNumberGenerator.new()
+		rng.seed = hash(Vector3i(roundi(p.x * 4.0), 0, roundi(p.z * 4.0)))
+		return rng
+
+	func _scatter_spot(p: Vector3, rng: RandomNumberGenerator) -> Vector3:
 		for tries in 6:
-			var q := p + Vector3(randf_range(-4.5, 4.5), 0, randf_range(-4.5, 4.5))
+			var q := p + Vector3(rng.randf_range(-4.5, 4.5), 0, rng.randf_range(-4.5, 4.5))
 			if _sand(q):
 				return Vector3(q.x, island.height_at(q.x, q.z), q.z)
 		return Vector3(p.x, island.height_at(p.x, p.z), p.z)
@@ -237,6 +251,16 @@ class GullFlock extends Node3D:
 		return on and island.water_level_at(p.x, p.z) < island.height_at(p.x, p.z) - 0.15
 
 	func _scared() -> bool:
+		if wild:
+			for t in wild.threats:
+				var tp: Vector3 = t["pos"]
+				var d := Vector2(tp.x - spot.x, tp.z - spot.z).length()
+				if t["car"]:
+					if (d < 18.0 and t["speed"] > 1.5) or d < 7.0 or (t["horn"] and d < 35.0):
+						return true
+				elif d < 7.5:
+					return true
+			return false
 		if _main == null:
 			return false
 		if _main.get("cars"):
@@ -267,7 +291,7 @@ class GullFlock extends Node3D:
 			g.alt = randf_range(7.0, 15.0)
 			g.flap = randf_range(1.2, 2.2)
 			g.vel = Vector3(randf_range(-1, 1), 4.0, randf_range(-1, 1))
-		var cam := get_viewport().get_camera_3d()
+		var cam := get_viewport().get_camera_3d() if show else null
 		if cam and cam.global_position.distance_to(spot) < 90.0:
 			for k in 3:
 				Sfx.play_at(self, "gull", spot + Vector3(randf_range(-4, 4), 3, randf_range(-4, 4)), -4.0 - k * 2.0, randf_range(0.9, 1.25))
@@ -282,29 +306,55 @@ class GullFlock extends Node3D:
 				return Vector3(q.x, island.height_at(q.x, q.z), q.z)
 		return spot
 
+	## Follower: what the host says the flock is doing.
+	func net_update(p: Vector3, center: Vector3, air: bool, landing: bool) -> void:
+		if not placed or (not _air and not air and spot.distance_to(p) > 0.5):
+			place_at(p)   # new flock, or moved somewhere out of sight
+			return
+		if air and not _air:
+			take_off()
+		if air:
+			_center = center
+		if (landing or (not air and _air)) and (not _landing or spot.distance_to(p) > 0.5):
+			_start_landing(p)   # (also catches a landing we missed while out of sight)
+
+	func _start_landing(ns: Vector3) -> void:
+		spot = ns
+		_landing = true
+		_land_t = 0.0
+		var rng := _rng_for(ns)
+		for g in gulls:
+			g.spot = _scatter_spot(ns, rng)
+
 	func _process(delta: float) -> void:
 		if not placed or island == null:
 			return
-		var cam := get_viewport().get_camera_3d()
-		var far := cam != null and cam.global_position.distance_to(spot) > 260.0
-		visible = not far
-		if far:
+		var cam := get_viewport().get_camera_3d() if show else null
+		var far := cam == null or cam.global_position.distance_to(spot) > 260.0
+		if show:
+			visible = not far
+		if far and not (logic and wild):
 			return
 		if not _air:
 			# the tide coming in, or something charging through: everyone up
-			if _scared() or not _sand(spot):
+			if logic and (_scared() or not _sand(spot)):
 				take_off()
-			else:
+			elif not far:
 				_ground(delta)
 			return
 		_air_t += delta
-		if not _landing and _air_t > _air_for and not _scared():
+		if logic and not _landing and _air_t > _air_for and not _scared():
 			var ns := _new_spot()
 			if _sand(ns):
-				spot = ns
-				_landing = true
-				for g in gulls:
-					g.spot = _scatter_spot(ns)
+				_start_landing(ns)
+		if gulls.is_empty():
+			# nothing to fly (online server): the landing takes a few seconds
+			if _landing:
+				_land_t += delta
+				if _land_t > 6.0:
+					_air = false
+					_landing = false
+			return
 		_call_t -= delta
 		if _call_t <= 0.0:
 			_call_t = randf_range(2.0, 6.0)

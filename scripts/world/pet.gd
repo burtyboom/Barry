@@ -225,7 +225,8 @@ func _build() -> void:
 				if kind == "greyhound" and not front:
 					thigh = lr * 2.6   # muscly
 				_capsule(hip, thigh, u + thigh, Vector3(0, -u * 0.5, 0), main_c, Vector3.ZERO)
-				_capsule(knee, lr, l + lr, Vector3(0, -l * 0.5, 0), low_c, Vector3.ZERO)
+				var shin := lr * (1.3 if kind == "greyhound" and front else 1.0)   # the greyhound's forelegs need to read
+				_capsule(knee, shin, l + shin, Vector3(0, -l * 0.5, 0), low_c, Vector3.ZERO)
 				_sphere(paw, Vector3(lr * 2.5, lr * 1.7, lr * 3.2), Vector3(0, 0, -lr * 0.6), low_c)
 			if not front:
 				# haunch: a round thigh muscle so the folded leg reads when sitting
@@ -242,6 +243,15 @@ func _build() -> void:
 	var neck_dir := Vector3(0, 0.82, -0.57).normalized()
 	if fluffy:
 		_sphere(_neck, Vector3.ONE * br * 1.5, neck_dir * neck_len * 0.5, main_c)
+	elif kind == "greyhound":
+		# a long arched sighthound neck: thick where it leaves the chest, slimming to the
+		# head, with the crest bowed up and forward (a curve of overlapping beads, not a pipe)
+		var ctrl := neck_dir * neck_len * 0.5 + Vector3(0, neck_len * 0.12, -neck_len * 0.22)
+		for k in 9:
+			var t := float(k) / 8.0
+			var p := ctrl * (2.0 * t * (1.0 - t)) + neck_dir * neck_len * (t * t)
+			var r := lerpf(br * 0.95, br * 0.5, t)
+			_sphere(_neck, Vector3(r * 2.0, r * 2.15, r * 2.1), p, main_c)
 	else:
 		var neck_r := br * 0.62
 		var nm := _capsule(_neck, neck_r, neck_len + neck_r * 2.0, neck_dir * neck_len * 0.5, main_c, Vector3.ZERO)
@@ -286,14 +296,26 @@ func _build() -> void:
 			var blaze := _sphere(_head, Vector3(hr * 0.42, hr * 1.5, hr * 1.2), Vector3(0, hr * 0.2, -hr * 0.62), acc)   # white blaze
 			blaze.rotation_degrees.x = 30.0
 			for x in [-1.0, 1.0]:
-				# semi-pricked ears with the tips flopped forward
+				# semi-pricked ears: a flat triangle standing up off the skull, the top third
+				# folded forward over the front (reads as an ear from the side and 3/4)
 				var ear := Node3D.new()
-				ear.position = Vector3(x * hr * 0.62, hr * 0.78, hr * 0.05)
+				ear.position = Vector3(x * hr * 0.6, hr * 0.7, hr * 0.12)
 				_head.add_child(ear)
-				var e := _sphere(ear, Vector3(hr * 0.8, hr * 0.95, hr * 0.5), Vector3(0, hr * 0.3, 0), main_c)
-				e.rotation_degrees.z = -x * 14.0
-				var tip := _sphere(ear, Vector3(hr * 0.62, hr * 0.42, hr * 0.5), Vector3(x * hr * 0.06, hr * 0.68, -hr * 0.2), main_c)
-				tip.rotation_degrees.x = 60.0
+				var lean := Node3D.new()
+				lean.rotation_degrees = Vector3(10.0, 0.0, -x * 18.0)
+				ear.add_child(lean)
+				var base_h := hr * 0.72
+				var flap := _frustum(lean, hr * 0.52, hr * 0.22, base_h, Vector3.ZERO, main_c)
+				flap.scale = Vector3(1.0, 1.0, 0.42)
+				# the pale inside of the ear, on the front face
+				var inner := _frustum(lean, hr * 0.3, hr * 0.13, base_h * 0.85, Vector3(0, hr * 0.04, -hr * 0.1), Color(0.78, 0.62, 0.62))
+				inner.scale = Vector3(1.0, 1.0, 0.25)
+				var fold := Node3D.new()
+				fold.position = Vector3(0, base_h * 0.96, 0)
+				fold.rotation_degrees.x = -78.0
+				lean.add_child(fold)
+				var tip := _cone(fold, hr * 0.22, hr * 0.38, Vector3.ZERO, main_c)
+				tip.scale = Vector3(1.0, 1.0, 0.42)
 				ear.set_meta("side", x)
 				_ears.append(ear)
 			face_z = -hr * 1.75
@@ -416,6 +438,13 @@ func _cone(parent: Node3D, r: float, h: float, pos: Vector3, c: Color) -> MeshIn
 	mi.material_override = Toon.mat(c)
 	mi.position = pos + Vector3(0, h * 0.5, 0)
 	parent.add_child(mi)
+	return mi
+
+
+## A cone with its top cut off (bottom radius r, top radius tr), sitting on pos.
+func _frustum(parent: Node3D, r: float, tr: float, h: float, pos: Vector3, c: Color) -> MeshInstance3D:
+	var mi := _cone(parent, r, h, pos, c)
+	(mi.mesh as CylinderMesh).top_radius = tr
 	return mi
 
 
@@ -804,9 +833,14 @@ func _pose_for(a: int) -> Dictionary:
 			# tip up until the front legs are straight under the shoulders
 			var shoulder := leg_l * 0.97 + _paw + _br * 0.15
 			var pitch := asin(clampf((shoulder - hy) / bl, 0.5, 0.97))
+			# long-legged dogs would sit bolt upright like a meerkat: lean them back to a
+			# sighthound sit and plant the (still straight) front legs a little forward instead
+			pitch = minf(pitch, 1.02 if kind == "greyhound" else 1.2)
 			p["hip_y"] = hy
 			p["pitch"] = pitch
-			p["front"] = Vector2(hz - bl * cos(pitch) - 0.01, _paw)
+			var sh_y := hy + bl * sin(pitch) - _br * 0.15 - _paw
+			var reach := sqrt(maxf(0.0, pow(leg_l * 0.97, 2.0) - sh_y * sh_y))
+			p["front"] = Vector2(hz - bl * cos(pitch) - 0.01 - reach, _paw)
 			p["hind"] = Vector2(hz - leg_l * 0.55, _paw)
 			p["head"] = 0.08
 			if cat:
@@ -828,7 +862,7 @@ func _pose_for(a: int) -> Dictionary:
 				p["sweep"] = 0.45
 			else:
 				# flopped down: front paws out in front, back legs tucked along the tummy
-				p["front"] = Vector2(-hz - leg_l * (0.5 if kind != "greyhound" else 0.3), _paw)
+				p["front"] = Vector2(-hz - leg_l * (0.5 if kind != "greyhound" else 1.05), _paw)   # greyhound: long forelegs stretched right out (any less and the elbows fold under the sand)
 				p["hind"] = Vector2(hz - leg_l * 0.9, _paw)
 				p["head"] = 0.05
 				p["tail"] = 1.35
