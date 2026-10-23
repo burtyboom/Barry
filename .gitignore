@@ -1,0 +1,9 @@
+# Godot
+.godot/
+*.tmp
+# builds and big media
+build/
+trailer/
+*.avi
+# local-only
+user_settings/
