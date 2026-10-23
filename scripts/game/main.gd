@@ -690,6 +690,22 @@ func _on_session_ready(local_id: int) -> void:
 		hud.show_toast("Hosting - waiting for players")
 
 
+## Pause menu: leave the game (or end it, if hosting) and go back to the main menu.
+func back_to_menu() -> void:
+	Net.flush_local()
+	if Net.mode == "client":
+		await get_tree().create_timer(0.25).timeout   # let the last stats get away
+	if convoy:
+		convoy.members.clear()
+		convoy.my_id = ""
+	player_names.clear()
+	Net.leave()
+	_clear_world()
+	_menu.visible = true
+	menu.status.text = ""
+	_menu_backdrop()
+
+
 func _on_session_failed(reason: String) -> void:
 	if Net.dedicated:
 		push_error(reason)

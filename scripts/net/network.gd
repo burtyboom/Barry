@@ -120,6 +120,14 @@ func join(address: String, port := PORT) -> void:
 	mode = "client"
 
 
+## Send any stats / achievements still waiting (before leaving).
+func flush_local() -> void:
+	if mode == "client" and server_dedicated and multiplayer.multiplayer_peer != null 			and (not _local_stats.is_empty() or not _local_achs.is_empty()):
+		_report.rpc_id(1, _local_stats, _local_achs)
+		_local_stats = {}
+		_local_achs = []
+
+
 func leave() -> void:
 	if multiplayer.multiplayer_peer:
 		multiplayer.multiplayer_peer.close()

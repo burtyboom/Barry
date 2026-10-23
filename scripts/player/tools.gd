@@ -16,6 +16,7 @@ extends Node3D
 ##                    right click to let out (G / H work anywhere too, even in the cab)
 
 const REACH := 1.8
+const UNHOOK_REACH := 2.2   ## how close to a strap / cable end to take it off
 const HOSE_LEN := 11.0
 const INFLATE_RATE := 2.5      ## psi per second
 const PLACE_RANGE := 9.0       ## how far from you camping gear can be put down
@@ -403,7 +404,7 @@ func _find_interaction() -> void:
 				player.car = other
 				player.get_in()
 			return
-	var end := ropes.nearest_end(pos + Vector3.UP * 0.6, 1.5)
+	var end := ropes.nearest_end(pos + Vector3.UP * 0.6, UNHOOK_REACH)
 	if not end.is_empty():
 		var kind: String = ropes.ropes[end["id"]]["kind"]
 		prompt = "[E] Unhook the %s" % ("strap" if kind == "strap" else "winch cable")
@@ -475,7 +476,12 @@ func _update_item(delta: float) -> void:
 		"strap":
 			player.pose_override = ""
 			var rp := _nearest_point(REACH)
-			if _strap_a.is_empty():
+			var tied := _strap_end_near()
+			if _strap_a.is_empty() and not tied.is_empty():
+				# that hook already has a strap on it: clicking takes it off, not another one on
+				prompt = "[Click / E] Unhook the strap"
+				hint = "Click to take the strap off"
+			elif _strap_a.is_empty():
 				hint = "Click a bullbar or tow hitch to hook the strap on"
 				if not rp.is_empty():
 					prompt = "[Click] Hook strap to %s %s" % [_car_name(rp["car"]), rp["label"]]
@@ -892,8 +898,22 @@ func _use(pressed: bool) -> void:
 					_main.achievements.unlock("happy_camper")
 
 
+## A strap end within reach (one that's already hooked on), or {}.
+func _strap_end_near() -> Dictionary:
+	var ropes: Ropes = _main.ropes
+	var end := ropes.nearest_end(player.global_position + Vector3.UP * 0.6, UNHOOK_REACH)
+	if end.is_empty() or ropes.ropes[end["id"]]["kind"] != "strap":
+		return {}
+	return end
+
+
 func _use_strap() -> void:
 	var rp := _nearest_point(REACH)
+	var tied := _strap_end_near()
+	if _strap_a.is_empty() and not tied.is_empty():
+		_main.ropes.remove(tied["id"])
+		_toast("Strap off")
+		return
 	if _strap_a.is_empty():
 		if rp.is_empty():
 			_toast("Walk up to a bullbar or tow hitch to hook the strap on")

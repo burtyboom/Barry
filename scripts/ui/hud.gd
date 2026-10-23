@@ -19,6 +19,8 @@ var _debug: Label
 var _map_tex: ImageTexture
 var minimap: Minimap
 var chat: ChatBox
+var pause: PauseMenu         ## Esc menu
+var players_list: PlayerList  ## hold Tab
 var _admin_toggle: Button
 var _helper_panel: PanelContainer
 var _talk_chip: Label
@@ -125,6 +127,16 @@ func _ready() -> void:
 
 	_build_maps(root)
 	_build_winch_buttons(root)
+
+	players_list = PlayerList.new()
+	players_list.name = "PlayerList"
+	players_list.main = get_parent()
+	root.add_child(players_list)
+	# last, so it sits over everything
+	pause = PauseMenu.new()
+	pause.name = "PauseMenu"
+	pause.main = get_parent()
+	root.add_child(pause)
 
 
 ## In the cab with the winch hooked on: big hold-down buttons (G / H do the same).
@@ -421,6 +433,11 @@ func show_toast(text: String) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if not visible:
+		return   # behind the main menu
+	if event is InputEventKey and (event as InputEventKey).keycode == KEY_TAB:
+		get_viewport().set_input_as_handled()   # Tab is the player list, not focus hopping
+		return
 	if event.is_action_pressed("help"):
 		var hp := get_child(0).get_node("HelpPanel") as Control
 		hp.visible = not hp.visible
@@ -438,6 +455,29 @@ func _unhandled_input(event: InputEvent) -> void:
 		if player and is_instance_valid(player):
 			player.wave()
 			get_parent().on_wave()
+
+
+## Esc gets caught here (before focused buttons can eat it); chat and the console
+## handle their own Esc while you're typing.
+func _input(event: InputEvent) -> void:
+	if visible and event is InputEventKey and event.pressed and not event.echo 			and (event as InputEventKey).keycode == KEY_ESCAPE and not typing():
+		_on_escape()
+		get_viewport().set_input_as_handled()
+
+
+## Esc closes whatever's open first (map, controls, admin, people list); otherwise
+## it opens / closes the pause menu.
+func _on_escape() -> void:
+	if pause.visible:
+		pause.close()
+	elif minimap.big_map.visible:
+		minimap.big_map.visible = false
+	elif _admin.visible:
+		_admin.visible = false
+	elif (get_child(0).get_node("HelpPanel") as Control).visible:
+		(get_child(0).get_node("HelpPanel") as Control).visible = false
+	else:
+		pause.open()
 
 
 # ------------------------------------------------------------- admin menu (top right)
