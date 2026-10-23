@@ -8,6 +8,6 @@ const VERSION := "1.0.0"
 const TITLE := "That Ain't Living Barry!"
 
 ## The dedicated server and its website (accounts, stats, downloads). Blank = not set up yet.
-const SERVER_HOST := ""
+const SERVER_HOST := "barry.rosefam.au"
 const SERVER_PORT := 7777
-const SITE_URL := ""
+const SITE_URL := "https://barry.rosefam.au"
