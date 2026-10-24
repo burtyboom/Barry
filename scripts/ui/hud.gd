@@ -480,6 +480,20 @@ func _on_escape() -> void:
 		pause.open()
 
 
+## Smaller screens (laptops): the controls card would sit on top of the chat box, so
+## slide it over to the right of the chat instead.
+func _fit_help() -> void:
+	var hp := get_child(0).get_node_or_null("HelpPanel") as Control
+	if hp == null or not hp.visible or chat == null:
+		return
+	var vs := get_viewport().get_visible_rect().size
+	var chat_top := vs.y - 16.0 - chat.size.y
+	var x := 16.0
+	if 326.0 + hp.size.y > chat_top - 8.0:
+		x = 16.0 + chat.size.x + 16.0
+	hp.position = Vector2(x, 326.0)
+
+
 # ------------------------------------------------------------- admin menu (top right)
 ## A clickable "Admin" button next to the minimap opens a list of every place on
 ## the island (click to teleport there) plus a fullscreen toggle. F2 also opens it.
@@ -919,6 +933,7 @@ func _update_hotbar() -> void:
 func _process(delta: float) -> void:
 	_update_hotbar()
 	_update_winch_buttons()
+	_fit_help()
 	if _admin.visible and _bot_count:
 		var bots: Bots = get_parent().bots
 		_bot_count.text = "Island bots (%d out and about)" % bots.ambient_count()

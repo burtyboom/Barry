@@ -40,6 +40,9 @@ func _initialize() -> void:
 	main.teleport_local(main.island.places[2]["pos"] + Vector3(randf_range(-40, 40), 0, randf_range(-40, 40)))
 	var car: SandVehicle = main.local_car
 	car.scripted = true
+	if "--bot" in OS.get_cmdline_user_args():
+		await create_timer(2.0).timeout
+		print(user, " spawned bot: ", main.bots.spawn(main.bots.random_role(false)))
 	var end := Time.get_ticks_msec() + secs * 1000
 	var lost := false
 	while Time.get_ticks_msec() < end:
@@ -54,7 +57,7 @@ func _initialize() -> void:
 		var enet := main.multiplayer.multiplayer_peer as ENetMultiplayerPeer
 		if enet and enet.get_peer(1):
 			ping = int(enet.get_peer(1).get_statistic(ENetPacketPeer.PEER_ROUND_TRIP_TIME))
-		print("%s sees %d players, %d cars, ping %d ms, %d fps" % [user, peers.size() - 1 + 1, main.cars.get_child_count(), ping, Engine.get_frames_per_second()])
+		print("%s sees %d players, %d cars, ping %d ms, %d fps, mem %d MB" % [user, peers.size() - 1 + 1, main.cars.get_child_count(), ping, Engine.get_frames_per_second(), OS.get_static_memory_usage() / 1048576])
 	if lost:
 		print(user, " DROPPED: ", failed[0])
 	else:

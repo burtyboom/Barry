@@ -81,6 +81,8 @@ func _ready() -> void:
 	_load_settings()
 	get_window().theme = UiTheme.make()
 	DisplayServer.window_set_title(GameVersion.TITLE)
+	get_window().size_changed.connect(_fit_ui_scale)
+	_fit_ui_scale()
 	_make_environment()
 	music = Music.new()
 	music.name = "Music"
@@ -663,6 +665,20 @@ func _take_name() -> void:
 		var n := menu.name_edit.text.strip_edges()
 		player_name = n if n != "" else "Mate"
 	save_settings()
+
+
+## The menus and HUD are laid out for 1600x900. On smaller windows (most laptops) shrink
+## all the 2D UI to fit; bigger screens stay at 1:1. The 3D view is unaffected.
+func _fit_ui_scale() -> void:
+	var w := get_window()
+	var sz := Vector2(w.size)
+	if sz.x < 2.0 or sz.y < 2.0:
+		return
+	var f := minf(1.0, minf(sz.x / 1600.0, sz.y / 900.0))
+	f = maxf(f, 0.55)
+	w.content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
+	w.content_scale_aspect = Window.CONTENT_SCALE_ASPECT_EXPAND
+	w.content_scale_size = Vector2i(sz / f)
 
 
 func _is_test_run() -> bool:

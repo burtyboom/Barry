@@ -14,7 +14,7 @@ const SECTIONS := [
 		[["G", "H"], "Winch in / out"],
 		[["F"], "Horn"],
 		[["E"], "Get out"],
-		[["R"], "Recover / flip the ute"],
+		[["R"], "Recover / flip it back"],
 	]],
 	["On foot", [
 		[["W", "A", "S", "D"], "Walk"],
@@ -35,7 +35,8 @@ const SECTIONS := [
 		[["Enter"], "Chat"],
 		[["V"], "Hold to talk"],
 		[["N"], "Music on / off"],
-		[["F11"], "Fullscreen"],
+		[["Tab"], "Hold: who's on"],
+		[["Esc"], "Menu / leave"],
 		[["F1"], "Show / hide this"],
 	]],
 ]
