@@ -207,7 +207,13 @@ func _check_hello(id: int, msg: Dictionary) -> void:
 			var uname := String(r.get("username", "Mate"))
 			for other in accounts:
 				if String(accounts[other]["username"]).to_lower() == uname.to_lower():
-					multiplayer.multiplayer_peer.disconnect_peer(other)   # logged in again somewhere else
+					# logged in again somewhere else: tell the old one why, then hang it up
+					_kicked.rpc_id(other, "Someone else just logged in as %s.
+Each person needs their own account - make one on the Play online screen." % uname)
+					var old: int = other
+					get_tree().create_timer(0.5).timeout.connect(func() -> void:
+						if multiplayer.multiplayer_peer and old in multiplayer.get_peers():
+							multiplayer.multiplayer_peer.disconnect_peer(old))
 			accounts[id] = {"username": uname, "since": int(Time.get_unix_time_from_system())}
 			reply = {"ok": true, "name": uname, "dedicated": true,
 				"achievements": r.get("achievements", []), "stats": r.get("stats", {})}
@@ -230,6 +236,12 @@ func _check_hello(id: int, msg: Dictionary) -> void:
 			if multiplayer.multiplayer_peer and _turned_away.has(id):
 				_turned_away.erase(id)
 				multiplayer.multiplayer_peer.disconnect_peer(id))
+
+
+## Client: the server is about to hang up on us - this is the reason to show.
+@rpc("authority", "call_remote", "reliable")
+func _kicked(why: String) -> void:
+	_reject_reason = why
 
 
 ## Server: the account name a peer logged in with.

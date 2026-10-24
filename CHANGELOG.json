@@ -1,5 +1,14 @@
 [
 	{
+		"version": "1.2.2",
+		"date": "2026-10-25",
+		"notes": [
+			"Fits on laptop screens now",
+			"Laptop running hot? Esc has a Graphics switch.",
+			"One account each, legends - sharing gets you bumped"
+		]
+	},
+	{
 		"version": "1.2.1",
 		"date": "2026-10-23",
 		"notes": [
