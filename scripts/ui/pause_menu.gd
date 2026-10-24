@@ -7,6 +7,7 @@ extends Control
 var main: Node
 var _leave_btn: Button
 var _leave_armed := false
+var _gfx_btn: Button
 
 
 func _ready() -> void:
@@ -49,6 +50,10 @@ func _ready() -> void:
 	_button(vb, "Fullscreen (F11)", UiTheme.TEAL, func() -> void:
 		if main:
 			main._toggle_fullscreen())
+	_gfx_btn = _button(vb, "", UiTheme.PURPLE, func() -> void:
+		if main:
+			main.set_graphics_low(not main.graphics_low)
+			_gfx_btn.text = _gfx_text())
 	_leave_btn = _button(vb, "Back to main menu", UiTheme.ORANGE, _on_leave)
 	_button(vb, "Quit game", UiTheme.RED, func() -> void: get_tree().quit())
 
@@ -71,6 +76,11 @@ func open() -> void:
 	visible = true
 	_leave_armed = false
 	_leave_btn.text = _leave_text()
+	_gfx_btn.text = _gfx_text()
+
+
+func _gfx_text() -> String:
+	return "Graphics: Low (faster)" if main and main.graphics_low else "Graphics: High (prettier)"
 
 
 func close() -> void:

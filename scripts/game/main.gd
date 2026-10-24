@@ -455,7 +455,9 @@ func _make_environment() -> void:
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
+	_env = env
 	var sun := DirectionalLight3D.new()
+	_sun = sun
 	sun.rotation_degrees = Vector3(-50, -35, 0)
 	sun.light_energy = 1.35
 	sun.light_color = Color(1.0, 0.94, 0.82)
@@ -467,6 +469,27 @@ func _make_environment() -> void:
 	sun.shadow_normal_bias = 2.5
 	sun.directional_shadow_max_distance = 180.0
 	add_child(sun)
+	apply_graphics()
+
+
+## Graphics High / Low (Esc menu). Low turns off the pricey screen effects, shortens the
+## shadows and renders the 3D a bit smaller - for laptops with built-in graphics.
+func apply_graphics() -> void:
+	if _env == null:
+		return
+	_env.ssao_enabled = not graphics_low
+	_env.glow_enabled = not graphics_low
+	_sun.directional_shadow_max_distance = 70.0 if graphics_low else 180.0
+	var vp := get_viewport()
+	vp.msaa_3d = Viewport.MSAA_DISABLED if graphics_low else Viewport.MSAA_2X
+	vp.scaling_3d_mode = Viewport.SCALING_3D_MODE_BILINEAR
+	vp.scaling_3d_scale = 0.75 if graphics_low else 1.0
+
+
+func set_graphics_low(on: bool) -> void:
+	graphics_low = on
+	apply_graphics()
+	save_settings()
 
 
 # ------------------------------------------------------------- menu
@@ -604,9 +627,18 @@ func _update_custom_cam(delta: float) -> void:
 
 # ------------------------------------------------------------- settings
 var _settings_music := true
+var graphics_low := false
+var _env: Environment
+var _sun: DirectionalLight3D
+
+
+## First run on built-in (laptop) graphics: start on Low.
+func _integrated_gpu() -> bool:
+	return RenderingServer.get_video_adapter_type() == RenderingDevice.DEVICE_TYPE_INTEGRATED_GPU
 
 
 func _load_settings() -> void:
+	graphics_low = _integrated_gpu()
 	var cf := ConfigFile.new()
 	if cf.load(SETTINGS) == OK:
 		player_name = String(cf.get_value("player", "name", player_name))
@@ -623,6 +655,7 @@ func _load_settings() -> void:
 		if not vehicle_kind in SandVehicle.KINDS:
 			vehicle_kind = "ute"
 		_settings_music = bool(cf.get_value("audio", "music", true))
+		graphics_low = bool(cf.get_value("video", "low", _integrated_gpu()))
 		var vol := float(cf.get_value("audio", "sfx_db", 0.0))
 		AudioServer.set_bus_volume_db(AudioServer.get_bus_index("SFX"), vol)
 
@@ -643,6 +676,7 @@ func save_settings() -> void:
 	cf.set_value("look", "pet_col", pet_col)
 	cf.set_value("player", "vehicle", vehicle_kind)
 	cf.set_value("audio", "music", music.enabled if music else true)
+	cf.set_value("video", "low", graphics_low)
 	cf.set_value("audio", "sfx_db", AudioServer.get_bus_volume_db(AudioServer.get_bus_index("SFX")))
 	cf.save(SETTINGS)
 
